@@ -11,7 +11,7 @@ SPREADSHEET_ID = "1rq9r6Y4MHAf8QxEzxdCz9ty5mNOM5Q7Vc-KIl4VgH5Y"
 # Altere '0' pelo número do gid da aba de OS caso a sua aba principal seja outra
 GID = "0" 
 
-URL_PLANILHA = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/export?format=csv&gid={0}"
+URL_PLANILHA = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/export?format=csv&gid=0"
 
 @st.cache_data(ttl=5)
 def carregar_dados():
