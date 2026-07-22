@@ -4,24 +4,16 @@ from datetime import date
 
 st.set_page_config(page_title="Sistema de OS & Dashboard (Online)", layout="wide")
 
-st.title("🛠️ Sistema de Gestão e Dashboard de OS (Nuvem)")
+st.title("🛠️ Sistema de Gestão e Dashboard de OS")
 
-# URL de leitura direta do Google Sheets no formato CSV
-# (Substitui os cabeçalhos de visualização e traz os dados limpos)
-@st.cache_data(ttl=5)
+# Link direto da sua planilha no Google Sheets (exportação em CSV sem exigir Secrets)
+URL_PLANILHA = "https://docs.google.com/spreadsheets/d/14x8Q_74Y5N12_1S5r0jXqQ5b7v8m9L0K1J2I3H4G5F/gviz/tq?tqx=out:csv&sheet=Ordens%20de%20Servi%C3%A7o"
+
+@st.cache_data(ttl=2)
 def carregar_dados():
     try:
-        # Puxa o link configurado nos Secrets do Streamlit
-        url_planilha = st.secrets["gsheets"]["spreadsheet"]
-        
-        # Converte o link de visualização da planilha para o formato de exportação de dados (CSV)
-        if "/edit" in url_planilha:
-            url_csv = url_planilha.split("/edit")[0] + "/gviz/tq?tqx=out:csv&sheet=Ordens%20de%20Servi%C3%A7o"
-        else:
-            url_csv = url_planilha
-
-        # Lê os dados pulando os cabeçalhos das 3 primeiras linhas
-        df = pd.read_csv(url_csv, skiprows=3)
+        # Lê os dados diretamente do link CSV do Google Sheets
+        df = pd.read_csv(URL_PLANILHA, skiprows=3)
         df = df.loc[:, ~df.columns.astype(str).str.contains('^Unnamed')]
         
         colunas_texto = ['Situação', 'Cliente', 'Descrição do Serviço', 'Observações', 'Telefone', 'Cidade']
@@ -30,8 +22,8 @@ def carregar_dados():
                 df[col] = df[col].astype(str).replace('nan', '')
         return df
     except Exception as e:
-        st.error(f"Erro ao carregar os dados do Google Sheets: {e}")
-        st.info("💡 Verifique se o link foi colado corretamente nos Secrets e se a planilha no Google Drive está compartilhada como 'Qualquer pessoa com o link'.")
+        st.error(f"Não foi possível ler a planilha no Google Sheets: {e}")
+        st.info("💡 Certifique-se de que a sua planilha no Google Drive está com o acesso liberado para 'Qualquer pessoa com o link'.")
         return pd.DataFrame()
 
 df = carregar_dados()
@@ -39,7 +31,7 @@ df = carregar_dados()
 if not df.empty:
     aba = st.sidebar.radio(
         "Navegação do Sistema", 
-        ["📈 Dashboard Executivo", "🔍 Consultar / Alterar OS", "➕ Cadastrar Nova OS", "📊 Visão Geral / Lista"]
+        ["📈 Dashboard Executivo", "🔍 Consultar OS", "➕ Cadastrar Nova OS", "📊 Visão Geral / Lista"]
     )
 
     # =========================================================================
@@ -96,10 +88,10 @@ if not df.empty:
                 st.table(top_clientes.reset_index(drop=True))
 
     # =========================================================================
-    # ABA 2: CONSULTAR / ALTERAR OS
+    # ABA 2: CONSULTAR OS
     # =========================================================================
-    elif aba == "🔍 Consultar / Alterar OS":
-        st.subheader("📋 Consultar e Detalhar OS")
+    elif aba == "🔍 Consultar OS":
+        st.subheader("📋 Consultar OS")
 
         if 'Número da OS' in df.columns:
             df_validas = df.dropna(subset=['Número da OS'])
@@ -133,7 +125,7 @@ if not df.empty:
     # =========================================================================
     elif aba == "➕ Cadastrar Nova OS":
         st.subheader("➕ Inserir Nova Ordem de Serviço")
-        st.info("💡 Como a planilha está compartilhada como Editor, você e seus funcionários podem inserir ou editar as OS diretamente na planilha no Google Drive. Os dados atualizarão no site em tempo real!")
+        st.info("💡 Como a planilha está compartilhada no Google Drive, insira os novos registros na planilha online. O site atualizará os indicadores em tempo real!")
 
     # =========================================================================
     # ABA 4: VISÃO GERAL / LISTA COMPLETA
