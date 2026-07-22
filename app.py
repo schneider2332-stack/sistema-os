@@ -1,119 +1,254 @@
 import streamlit as st
 import pandas as pd
-from streamlit_gsheets import GSheetsConnection
-import plotly.express as px
+from datetime import datetime
 
-# Configuração da página
-st.set_page_config(
-    page_title="Sistema de Ordens de Serviço",
-    page_icon="🛠️",
-    layout="wide"
-)
+st.set_page_config(page_title="Sistema de Gestão de OS & Fluxo de Caixa", layout="wide")
 
-# Conexão com o Google Sheets
-conn = st.connection("gsheets", type=GSheetsConnection)
+st.title("🛠️ Sistema de Gestão de Ordens de Serviço (OS)")
 
-def load_data():
-    # Lê a aba 'OS' do Google Sheets
-    df = conn.read(worksheet="OS", ttl=0)
-    # Garante conversão de datas e valores numéricos
-    if "Data" in df.columns:
-        df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
-    if "Valor Total" in df.columns:
-        df["Valor Total"] = pd.to_numeric(df["Valor Total"], errors="coerce").fillna(0.0)
-    return df
+# =============================================================================
+# CONFIGURAÇÃO DA PLANILHA DO GOOGLE SHEETS
+# =============================================================================
+SHEET_ID = "19Y3_TJGk0svt-0LAJdQ11MGBsLbAzqbE19kRDChP9tA"
+GID_ORDENS_SERVICO = "417364075"
 
-df_os = load_data()
+URL_CSV = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={GID_ORDENS_SERVICO}"
 
-# Menu Lateral Navigation
-st.sidebar.title("📌 Menu de Navegação")
-menu = st.sidebar.radio(
-    "Selecione uma opção:",
-    ["📊 OS Cadastradas (Lista)", "➕ Nova OS", "✏️ Editar OS", "📈 Dashboard Financeiro e Fluxo de Caixa"]
-)
-
-# ---------------------------------------------------------
-# 1. LISTA DE OS
-# ---------------------------------------------------------
-if menu == "📊 OS Cadastradas (Lista)":
-    st.title("📊 Ordens de Serviço Cadastradas")
-    
-    if not df_os.empty:
-        # Filtros de busca na lista
-        col_f1, col_f2 = st.columns(2)
-        with col_f1:
-            status_filter = st.multiselect("Filtrar por Status:", options=df_os["Status"].dropna().unique() if "Status" in df_os.columns else [])
-        with col_f2:
-            cliente_filter = st.text_input("Buscar por Cliente:")
+@st.cache_data(ttl=2)
+def carregar_dados():
+    try:
+        # Lê a planilha bruta do Google Sheets
+        df_raw = pd.read_csv(URL_CSV, header=None)
         
-        df_filtered = df_os.copy()
-        if status_filter:
-            df_filtered = df_filtered[df_filtered["Status"].isin(status_filter)]
-        if cliente_filter and "Cliente" in df_filtered.columns:
-            df_filtered = df_filtered[df_filtered["Cliente"].astype(str).str.contains(cliente_filter, case=False, na=False)]
-            
-        st.dataframe(df_filtered, use_container_width=True)
-    else:
-        st.info("Nenhuma Ordem de Serviço encontrada.")
+        if df_raw.empty:
+            return pd.DataFrame()
+        
+        # Localiza dinamicamente em qual linha está o cabeçalho real
+        linha_cabecalho = 0
+        for idx, row in df_raw.iterrows():
+            valores = [str(v).upper().strip() for v in row.values if pd.notna(v)]
+            if any("OS" in item or "CLIENTE" in item or "SERVIÇO" in item or "VALOR" in item for item in valores):
+                linha_cabecalho = idx
+                break
+        
+        # Define as colunas reais e limpa a tabela
+        df = df_raw.iloc[linha_cabecalho + 1:].copy()
+        df.columns = [str(v).strip() for v in df_raw.iloc[linha_cabecalho].values]
+        
+        df = df.dropna(how='all')
+        df = df.loc[:, ~df.columns.astype(str).str.contains('^Unnamed|^nan', case=False)]
+        df = df.reset_index(drop=True)
+        
+        return df
+    except Exception as e:
+        st.error(f"Erro ao acessar e processar a planilha do Google Sheets: {e}")
+        return pd.DataFrame()
 
-# ---------------------------------------------------------
-# 2. NOVA OS
-# ---------------------------------------------------------
-elif menu == "➕ Nova OS":
-    st.title("➕ Cadastrar Nova Ordem de Serviço")
+df = carregar_dados()
+
+# Função auxiliar para conversão de valores monetários de forma segura
+def converter_para_numero(valor):
+    if pd.isna(valor):
+        return 0.0
+    val_str = str(valor).replace('R$', '').replace('.', '').replace(',', '.').strip()
+    try:
+        return float(val_str)
+    except:
+        return 0.0
+
+# =============================================================================
+# MENU LATERAL DE NAVEGAÇÃO
+# =============================================================================
+menu = st.sidebar.radio(
+    "📌 Navegação do Sistema",
+    [
+        "📈 Dashboard Financeiro & Fluxo de Caixa",
+        "📊 OS Cadastradas (Lista)",
+        "🔍 Consultar / Detalhar OS",
+        "➕ Cadastrar Nova OS",
+        "✏️ Alterar OS / Pagamento"
+    ]
+)
+
+# =============================================================================
+# 1. DASHBOARD FINANCEIRO E FLUXO DE CAIXA MENSAL
+# =============================================================================
+if menu == "📈 Dashboard Financeiro & Fluxo de Caixa":
+    st.subheader("📈 Painel de Indicadores & Fluxo de Caixa Mensal")
+    
+    if not df.empty:
+        # Identificação inteligente das colunas
+        col_valor = next((c for c in df.columns if "VALOR" in c.upper() or "TOTAL" in c.upper() or "PREÇO" in c.upper()), None)
+        col_status = next((c for c in df.columns if "STATUS" in c.upper() or "SITUAÇÃO" in c.upper() or "SITUACAO" in c.upper()), None)
+        col_pagto = next((c for c in df.columns if "PAG" in c.upper() or "FORMA" in c.upper()), None)
+        col_data = next((c for c in df.columns if "DATA" in c.upper()), None)
+        
+        # Converte valores numéricos
+        if col_valor:
+            df['VALOR_CALC'] = df[col_valor].apply(converter_para_numero)
+        else:
+            df['VALOR_CALC'] = 0.0
+            
+        # Converte coluna de data para processar fluxo mensal
+        if col_data:
+            df['DATA_DT'] = pd.to_datetime(df[col_data], errors='coerce', dayfirst=True)
+            df['ANO_MES'] = df['DATA_DT'].dt.strftime('%Y-%m')
+        else:
+            df['ANO_MES'] = "Indefinido"
+
+        # Filtro de Mês/Ano na Sidebar
+        meses_unicos = sorted([m for m in df['ANO_MES'].dropna().unique() if m != "Indefinido"], reverse=True)
+        if meses_unicos:
+            st.sidebar.subheader("📅 Filtro de Período")
+            meses_selecionados = st.sidebar.multiselect("Filtrar por Mês/Ano:", options=meses_unicos, default=meses_unicos)
+            if meses_selecionados:
+                df_filtered = df[df['ANO_MES'].isin(meses_selecionados)]
+            else:
+                df_filtered = df.copy()
+        else:
+            df_filtered = df.copy()
+
+        fat_total = df_filtered['VALOR_CALC'].sum()
+        
+        # Separa Recebido e Em Aberto
+        if col_status:
+            status_concluido = df_filtered[col_status].astype(str).str.upper().str.contains("PAGO|CONCLUÍDO|CONCLUIDO|ENTREGUE|FINALIZADO", na=False)
+            val_recebido = df_filtered[status_concluido]['VALOR_CALC'].sum()
+            val_aberto = df_filtered[~status_concluido]['VALOR_CALC'].sum()
+        else:
+            val_recebido = fat_total
+            val_aberto = 0.0
+
+        # CARDS MÉTRICOS PRINCIPAIS
+        m1, m2, m3 = st.columns(3)
+        m1.metric("💵 Faturamento Total", f"R$ {fat_total:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+        m2.metric("✅ Valor Recebido", f"R$ {val_recebido:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+        m3.metric("⏳ Valor em Aberto", f"R$ {val_aberto:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+        
+        st.markdown("---")
+        st.markdown("### 💳 Faturamento Por Forma de Pagamento")
+        
+        # Filtros por forma de pagamento
+        if col_pagto:
+            pix_val = df_filtered[df_filtered[col_pagto].astype(str).str.upper().str.contains("PIX", na=False)]['VALOR_CALC'].sum()
+            cartao_val = df_filtered[df_filtered[col_pagto].astype(str).str.upper().str.contains("CARTÃO|CARTAO|CRÉDITO|DÉBITO", na=False)]['VALOR_CALC'].sum()
+            dinheiro_val = df_filtered[df_filtered[col_pagto].astype(str).str.upper().str.contains("DINHEIRO|ESPÉCIE", na=False)]['VALOR_CALC'].sum()
+            boleto_val = df_filtered[df_filtered[col_pagto].astype(str).str.upper().str.contains("BOLETO", na=False)]['VALOR_CALC'].sum()
+        else:
+            pix_val = cartao_val = dinheiro_val = boleto_val = 0.0
+
+        p1, p2, p3, p4 = st.columns(4)
+        p1.metric("📱 Pix", f"R$ {pix_val:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+        p2.metric("💳 Cartão", f"R$ {cartao_val:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+        p3.metric("💵 Dinheiro", f"R$ {dinheiro_val:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+        p4.metric("📄 Boleto", f"R$ {boleto_val:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+        
+        st.markdown("---")
+        
+        # FLUXO DE CAIXA MENSAL (GRÁFICO E TABELA)
+        st.markdown("### 🗓️ Fluxo de Caixa Mensal (Evolução por Mês)")
+        if col_data and not df.empty:
+            df_fluxo = df[df['ANO_MES'] != "Indefinido"].groupby('ANO_MES')['VALOR_CALC'].sum().reset_index()
+            df_fluxo.columns = ['Mês/Ano', 'Faturamento (R$)']
+            
+            st.bar_chart(df_fluxo.set_index('Mês/Ano'))
+            
+            st.markdown("#### 📑 Resumo Mensal")
+            st.dataframe(df_fluxo, use_container_width=True)
+            
+    else:
+        st.warning("⚠️ Nenhum dado foi retornado para construir o Dashboard.")
+
+# =============================================================================
+# 2. OS CADASTRADAS (LISTA COMPLETA)
+# =============================================================================
+elif menu == "📊 OS Cadastradas (Lista)":
+    st.subheader("📋 Tabela Geral de Ordens de Serviço")
+    
+    if not df.empty:
+        st.metric("Total de OSs Registradas", len(df))
+        st.markdown("---")
+        st.dataframe(df, use_container_width=True)
+    else:
+        st.warning("⚠️ Não foram encontrados dados na aba da planilha.")
+
+# =============================================================================
+# 3. CONSULTAR OS
+# =============================================================================
+elif menu == "🔍 Consultar / Detalhar OS":
+    st.subheader("🔍 Consultar Ordem de Serviço")
+    
+    if not df.empty:
+        colunas = list(df.columns)
+        coluna_os = next((c for c in colunas if "OS" in c.upper() or "NUMERO" in c.upper() or "Nº" in c.upper()), colunas[0])
+        
+        opcoes_os = df[coluna_os].dropna().astype(str).unique()
+        os_escolhida = st.selectbox("Selecione a OS que deseja visualizar:", opcoes_os)
+        
+        if os_escolhida:
+            dados = df[df[coluna_os].astype(str) == os_escolhida]
+            st.markdown("### 📄 Informações do Registro")
+            st.dataframe(dados, use_container_width=True)
+    else:
+        st.warning("Sem dados disponíveis para busca.")
+
+# =============================================================================
+# 4. CADASTRAR NOVA OS
+# =============================================================================
+elif menu == "➕ Cadastrar Nova OS":
+    st.subheader("➕ Formulário para Nova OS")
     
     with st.form("form_nova_os", clear_on_submit=True):
         col1, col2 = st.columns(2)
         
         with col1:
-            numero_os = st.text_input("Número da OS *")
-            cliente = st.text_input("Nome do Cliente *")
-            data_os = st.date_input("Data de Entrada")
-            equipamento = st.text_input("Equipamento / Item")
-            
+            num_os = st.text_input("Número da OS", value=f"OS-{len(df)+1:04d}")
+            cliente = st.text_input("Nome do Cliente")
+            telefone = st.text_input("Telefone / WhatsApp")
+            servico = st.text_area("Descrição do Serviço / Defeito")
+        
         with col2:
-            servico = st.text_area("Descrição do Serviço")
             valor = st.number_input("Valor Total (R$)", min_value=0.0, step=10.0, format="%.2f")
-            forma_pagto = st.selectbox("Forma de Pagamento", ["Pix", "Cartão", "Dinheiro", "Boleto", "Outro"])
-            status = st.selectbox("Status da OS", ["Pendente", "Em Andamento", "Concluído", "Entregue", "Cancelado"])
+            forma_pagamento = st.selectbox(
+                "Forma de Pagamento",
+                ["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro", "Boleto", "Pagamento Misto"]
+            )
+            detalhe_misto = ""
+            if forma_pagamento == "Pagamento Misto":
+                detalhe_misto = st.text_input("Detalhamento do Pagamento (Ex: R$ 50 Dinheiro + R$ 100 Pix)")
             
-        submitted = st.form_submit_button("Salvar OS")
+            status = st.selectbox("Status Inicial", ["Aberto", "Em Andamento", "Aguardando Peça", "Concluído", "Entregue"])
+            data = st.date_input("Data de Entrada", datetime.now())
+            
+        btn_salvar = st.form_submit_button("💾 Gerar Registro de OS")
         
-        if submitted:
-            if not numero_os or not cliente:
-                st.error("Por favor, preencha os campos obrigatórios (*).")
-            else:
-                nova_linha = pd.DataFrame([{
-                    "Nº OS": numero_os,
-                    "Cliente": cliente,
-                    "Data": data_os.strftime("%Y-%m-%d"),
-                    "Equipamento": equipamento,
-                    "Serviço": servico,
-                    "Valor Total": valor,
-                    "Forma Pagamento": forma_pagto,
-                    "Status": status
-                }])
-                
-                df_atualizado = pd.concat([df_os, nova_linha], ignore_index=True)
-                conn.update(worksheet="OS", data=df_atualizado)
-                st.success(f"OS Nº {numero_os} cadastrada com sucesso!")
-                st.rerun()
+        if btn_salvar:
+            pagto_final = detalhe_misto if forma_pagamento == "Pagamento Misto" else forma_pagamento
+            st.success(f"✅ Registro gerado para a OS {num_os}!")
+            st.write(f"**Cliente:** {cliente} | **Valor:** R$ {valor:.2f} | **Pagamento:** {pagto_final}")
 
-# ---------------------------------------------------------
-# 3. EDITAR OS
-# ---------------------------------------------------------
-elif menu == "✏️ Editar OS":
-    st.title("✏️ Editar Ordem de Serviço")
+# =============================================================================
+# 5. ALTERAR OS / FORMA DE PAGAMENTO
+# =============================================================================
+elif menu == "✏️ Alterar OS / Pagamento":
+    st.subheader("✏️ Alterar Status e Forma de Pagamento")
     
-    if not df_os.empty and "Nº OS" in df_os.columns:
-        os_list = df_os["Nº OS"].astype(str).tolist()
-        selected_os = st.selectbox("Selecione o Número da OS que deseja editar:", [""] + os_list)
+    if not df.empty:
+        colunas = list(df.columns)
+        coluna_os = next((c for c in colunas if "OS" in c.upper() or "NUMERO" in c.upper() or "Nº" in c.upper()), colunas[0])
         
-        if selected_os:
-            os_data = df_os[df_os["Nº OS"].astype(str) == selected_os].iloc[0]
-            
+        opcoes_os = df[coluna_os].dropna().astype(str).unique()
+        os_para_editar = st.selectbox("Selecione a OS para alterar:", opcoes_os)
+        
+        if os_para_editar:
+            st.markdown("---")
             with st.form("form_editar_os"):
                 col1, col2 = st.columns(2)
                 
                 with col1:
-                    cliente = st.text_input("Cliente",
+                    novo_status = st.selectbox(
+                        "Alterar Status",
+                        ["Aberto", "Em Andamento", "Aguardando Peça", "Concluído", "Entregue", "Cancelado"]
+                    )
+                    nova_forma_pagto = st.selectbox(
+                        "Alterar Forma de Pagamento",
