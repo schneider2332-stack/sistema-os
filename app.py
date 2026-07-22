@@ -7,7 +7,7 @@ st.set_page_config(page_title="Sistema de OS & Dashboard", layout="wide")
 st.title("🛠️ Sistema de Gestão e Dashboard de OS")
 
 # Link público da sua planilha no Google Sheets
-URL_PLANILHA = "https://docs.google.com/spreadsheets/d/14x8Q_74Y5N12_1S5r0jXqQ5b7v8m9L0K1J2I3H4G5F/gviz/tq?tqx=out:csv"
+URL_PLANILHA = "https://docs.google.com/spreadsheets/d/1rq9r6Y4MHAf8QxEzxdCz9ty5mNOM5Q7Vc-KIl4VgH5Y/edit?usp=sharing"
 
 @st.cache_data(ttl=2)
 def carregar_dados():
