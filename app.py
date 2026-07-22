@@ -24,17 +24,15 @@ except Exception as e:
     modo_escrita_ativo = False
     mensagem_erro_escrita = str(e)
 
-# FUNÇÃO DE CONVERSÃO INTELIGENTE DE MOEDA (Corrige o erro de 500 -> 50.000)
+# FUNÇÃO DE CONVERSÃO INTELIGENTE DE MOEDA (Suporta "1.300,00", "1300,00", "1300.00")
 def converter_para_numero(valor):
     if pd.isna(valor) or valor is None:
         return 0.0
     
     val_str = str(valor).replace('R$', '').strip()
-    
     if not val_str:
         return 0.0
         
-    # Se tem vírgula e ponto (ex: 1.500,00)
     if ',' in val_str and '.' in val_str:
         if val_str.rfind(',') > val_str.rfind('.'):
             val_str = val_str.replace('.', '').replace(',', '.')
@@ -48,11 +46,13 @@ def converter_para_numero(valor):
     except:
         return 0.0
 
+def formatar_brl(valor):
+    return f"R$ {valor:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+
 @st.cache_data(ttl=1)
 def carregar_dados():
     global modo_escrita_ativo, mensagem_erro_escrita
     
-    # Tentativa 1: Leitura usando GSheetsConnection
     if modo_escrita_ativo and conn_gsheets is not None:
         try:
             df = conn_gsheets.read(ttl=0)
@@ -62,7 +62,6 @@ def carregar_dados():
             modo_escrita_ativo = False
             mensagem_erro_escrita = str(e)
             
-    # Tentativa 2: Fallback para leitura via CSV público
     try:
         url_csv = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={GID_ORDENS_SERVICO}"
         df_raw = pd.read_csv(url_csv, header=None)
@@ -106,9 +105,6 @@ if modo_escrita_ativo:
     st.sidebar.success("🟢 Gravação Direta: ATIVA")
 else:
     st.sidebar.warning("🟡 Modo de Leitura (Somente Leitura)")
-    if detalhe_erro:
-        with st.sidebar.expander("🔍 Detalhes do Diagnóstico"):
-            st.caption(detalhe_erro)
 
 # =============================================================================
 # 1. DASHBOARD FINANCEIRO E FLUXO DE CAIXA MENSAL
@@ -149,9 +145,9 @@ if menu == "📈 Dashboard Financeiro & Fluxo de Caixa":
             val_aberto = 0.0
 
         m1, m2, m3 = st.columns(3)
-        m1.metric("💵 Faturamento Total", f"R$ {fat_total:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
-        m2.metric("✅ Valor Recebido", f"R$ {val_recebido:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
-        m3.metric("⏳ Valor em Aberto", f"R$ {val_aberto:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+        m1.metric("💵 Faturamento Total", formatar_brl(fat_total))
+        m2.metric("✅ Valor Recebido", formatar_brl(val_recebido))
+        m3.metric("⏳ Valor em Aberto", formatar_brl(val_aberto))
         
         st.markdown("---")
         st.markdown("### 💳 Faturamento Por Forma de Pagamento")
@@ -165,13 +161,13 @@ if menu == "📈 Dashboard Financeiro & Fluxo de Caixa":
             pix_val = cartao_val = dinheiro_val = boleto_val = 0.0
 
         p1, p2, p3, p4 = st.columns(4)
-        p1.metric("📱 Pix", f"R$ {pix_val:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
-        p2.metric("💳 Cartão", f"R$ {cartao_val:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
-        p3.metric("💵 Dinheiro", f"R$ {dinheiro_val:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
-        p4.metric("📄 Boleto", f"R$ {boleto_val:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+        p1.metric("📱 Pix", formatar_brl(pix_val))
+        p2.metric("💳 Cartão", formatar_brl(cartao_val))
+        p3.metric("💵 Dinheiro", formatar_brl(dinheiro_val))
+        p4.metric("📄 Boleto", formatar_brl(boleto_val))
         
         st.markdown("---")
-        st.markdown("### 🗓️ Fluxo de Caixa Mensal (Evolução por Mês)")
+        st.markdown("### 🗓️ Fluxo de Caixa Mensal")
         df_fluxo = df[df['ANO_MES'] != "Sem Data"].groupby('ANO_MES')['VALOR_CALC'].sum().reset_index()
         df_fluxo.columns = ['Mês/Ano', 'Faturamento (R$)']
         
@@ -182,7 +178,7 @@ if menu == "📈 Dashboard Financeiro & Fluxo de Caixa":
         st.warning("⚠️ Nenhum dado retornado da planilha.")
 
 # =============================================================================
-# 2. OS CADASTRADAS (LISTA COMPLETA)
+# 2. OS CADASTRADAS
 # =============================================================================
 elif menu == "📊 OS Cadastradas (Lista)":
     st.subheader("📋 Tabela Geral de Ordens de Serviço")
@@ -190,8 +186,6 @@ elif menu == "📊 OS Cadastradas (Lista)":
         st.metric("Total de OSs Registradas", len(df))
         st.markdown("---")
         st.dataframe(df, use_container_width=True)
-    else:
-        st.warning("⚠️ Nenhum registro encontrado.")
 
 # =============================================================================
 # 3. CONSULTAR OS
@@ -214,43 +208,73 @@ elif menu == "🔍 Consultar / Detalhar OS":
 elif menu == "➕ Cadastrar Nova OS":
     st.subheader("➕ Formulário para Nova OS")
     
-    with st.form("form_nova_os", clear_on_submit=True):
-        col1, col2 = st.columns(2)
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        num_os = st.text_input("Número da OS", value=f"OS-{len(df)+1:04d}")
+        cliente = st.text_input("Nome do Cliente")
+        telefone = st.text_input("Telefone / WhatsApp")
+        servico = st.text_area("Descrição do Serviço / Defeito")
+    
+    with col2:
+        forma_pagamento = st.selectbox("Forma de Pagamento", ["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro", "Boleto", "Pagamento Misto"])
         
-        with col1:
-            num_os = st.text_input("Número da OS", value=f"OS-{len(df)+1:04d}")
-            cliente = st.text_input("Nome do Cliente")
-            telefone = st.text_input("Telefone / WhatsApp")
-            servico = st.text_area("Descrição do Serviço / Defeito")
+        # CAMPO DE VALOR FLEXÍVEL (Aceita "1.300,00", "1300,00", "1300.00")
+        valor_input = st.text_input("Valor Total (R$)", value="0,00", help="Pode digitar com ponto ou vírgula, ex: 1.300,00 ou 1300,00")
+        valor_total_num = converter_para_numero(valor_input)
         
-        with col2:
-            valor = st.number_input("Valor Total (R$)", min_value=0.0, step=10.0, format="%.2f")
-            forma_pagamento = st.selectbox("Forma de Pagamento", ["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro", "Boleto", "Pagamento Misto"])
-            status = st.selectbox("Status Inicial", ["Aberto", "Em Andamento", "Aguardando Peça", "Concluído", "Entregue"])
-            data_entrada = st.date_input("Data de Entrada", datetime.now()).strftime("%d/%m/%Y")
+        # SEÇÃO DEDICADA PARA PAGAMENTO MISTO
+        detalhe_pagto_str = forma_pagamento
+        if forma_pagamento == "Pagamento Misto":
+            st.markdown("##### 💵 Detalhamento do Pagamento Misto")
+            v_pix = st.text_input("Valor no Pix (R$)", value="0,00")
+            v_cartao = st.text_input("Valor no Cartão (R$)", value="0,00")
+            v_dinheiro = st.text_input("Valor em Dinheiro (R$)", value="0,00")
+            v_boleto = st.text_input("Valor em Boleto (R$)", value="0,00")
             
-        btn_salvar = st.form_submit_button("💾 Salvar no Google Sheets")
+            n_pix = converter_para_numero(v_pix)
+            n_cartao = converter_para_numero(v_cartao)
+            n_dinheiro = converter_para_numero(v_dinheiro)
+            n_boleto = converter_para_numero(v_boleto)
+            
+            soma_misto = n_pix + n_cartao + n_dinheiro + n_boleto
+            if soma_misto > 0 and valor_total_num == 0.0:
+                valor_total_num = soma_misto
+                
+            partes = []
+            if n_pix > 0: partes.append(f"Pix: {formatar_brl(n_pix)}")
+            if n_cartao > 0: partes.append(f"Cartão: {formatar_brl(n_cartao)}")
+            if n_dinheiro > 0: partes.append(f"Dinheiro: {formatar_brl(n_dinheiro)}")
+            if n_boleto > 0: partes.append(f"Boleto: {formatar_brl(n_boleto)}")
+            
+            if partes:
+                detalhe_pagto_str = "Misto (" + " | ".join(partes) + ")"
         
-        if btn_salvar:
-            valor_formatado = f"{valor:.2f}".replace('.', ',')
-            
-            nova_os = pd.DataFrame([{
-                "OS": num_os, "Cliente": cliente, "Telefone": telefone,
-                "Serviço": servico, "Valor Total": f"R$ {valor_formatado}",
-                "Forma Pagamento": forma_pagamento, "Status": status, "Data": data_entrada
-            }])
-            
-            if modo_escrita_ativo and conn_gsheets is not None:
-                try:
-                    df_atualizado = pd.concat([df, nova_os], ignore_index=True)
-                    conn_gsheets.update(data=df_atualizado)
-                    st.success(f"✅ OS {num_os} salva diretamente no Google Sheets com valor de R$ {valor_formatado}!")
-                    st.cache_data.clear()
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Erro ao salvar no Google Sheets: {e}")
-            else:
-                st.warning("⚠️ O sistema está em modo de leitura.")
+        status = st.selectbox("Status Inicial", ["Aberto", "Em Andamento", "Aguardando Peça", "Concluído", "Entregue"])
+        data_entrada = st.date_input("Data de Entrada", datetime.now()).strftime("%d/%m/%Y")
+
+    btn_salvar = st.button("💾 Salvar OS no Google Sheets")
+    
+    if btn_salvar:
+        valor_str_salvar = formatar_brl(valor_total_num)
+        
+        nova_os = pd.DataFrame([{
+            "OS": num_os, "Cliente": cliente, "Telefone": telefone,
+            "Serviço": servico, "Valor Total": valor_str_salvar,
+            "Forma Pagamento": detalhe_pagto_str, "Status": status, "Data": data_entrada
+        }])
+        
+        if modo_escrita_ativo and conn_gsheets is not None:
+            try:
+                df_atualizado = pd.concat([df, nova_os], ignore_index=True)
+                conn_gsheets.update(data=df_atualizado)
+                st.success(f"✅ OS {num_os} salva no Google Sheets com valor de {valor_str_salvar}!")
+                st.cache_data.clear()
+                st.rerun()
+            except Exception as e:
+                st.error(f"Erro ao salvar no Google Sheets: {e}")
+        else:
+            st.warning("⚠️ O sistema está em modo de leitura.")
 
 # =============================================================================
 # 5. ALTERAR OS / PAGAMENTO
@@ -270,30 +294,50 @@ elif menu == "✏️ Alterar OS / Pagamento":
             idx = df[df[coluna_os].astype(str) == os_para_editar].index[0]
             val_atual = converter_para_numero(df.loc[idx, col_valor]) if col_valor else 0.0
             
-            with st.form("form_editar_os"):
-                col1, col2 = st.columns(2)
-                with col1:
-                    novo_status = st.selectbox("Alterar Status", ["Aberto", "Em Andamento", "Aguardando Peça", "Concluído", "Entregue", "Cancelado"])
-                    nova_forma_pagto = st.selectbox("Alterar Forma de Pagamento", ["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro", "Boleto", "Pagamento Misto"])
-                with col2:
-                    novo_valor = st.number_input("Atualizar Valor (R$)", value=val_atual, min_value=0.0, step=5.0, format="%.2f")
-
-                btn_atualizar = st.form_submit_button("🔄 Atualizar no Google Sheets")
+            col1, col2 = st.columns(2)
+            with col1:
+                novo_status = st.selectbox("Alterar Status", ["Aberto", "Em Andamento", "Aguardando Peça", "Concluído", "Entregue", "Cancelado"])
+                nova_forma_pagto = st.selectbox("Alterar Forma de Pagamento", ["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro", "Boleto", "Pagamento Misto"])
+            
+            with col2:
+                novo_valor_input = st.text_input("Atualizar Valor Total (R$)", value=f"{val_atual:,.2f}".replace('.', 'X').replace(',', '.').replace('X', ','))
+                novo_valor_num = converter_para_numero(novo_valor_input)
                 
-                if btn_atualizar:
-                    if modo_escrita_ativo and conn_gsheets is not None:
-                        try:
-                            valor_formatado = f"{novo_valor:.2f}".replace('.', ',')
-                            df.loc[idx, "Status"] = novo_status
-                            df.loc[idx, "Forma Pagamento"] = nova_forma_pagto
-                            if col_valor:
-                                df.loc[idx, col_valor] = f"R$ {valor_formatado}"
-                                
-                            conn_gsheets.update(data=df)
-                            st.success(f"✅ OS {os_para_editar} atualizada no Google Sheets!")
-                            st.cache_data.clear()
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Erro ao atualizar no Google Sheets: {e}")
-                    else:
-                        st.warning("⚠️ O sistema está em modo de leitura.")
+                detalhe_pagto_edit = nova_forma_pagto
+                if nova_forma_pagto == "Pagamento Misto":
+                    st.markdown("##### 💵 Detalhar Pagamento Misto")
+                    ev_pix = st.text_input("Parte no Pix (R$)", value="0,00")
+                    ev_cartao = st.text_input("Parte no Cartão (R$)", value="0,00")
+                    ev_dinheiro = st.text_input("Parte em Dinheiro (R$)", value="0,00")
+                    
+                    en_pix = converter_para_numero(ev_pix)
+                    en_cartao = converter_para_numero(ev_cartao)
+                    en_dinheiro = converter_para_numero(ev_dinheiro)
+                    
+                    partes_e = []
+                    if en_pix > 0: partes_e.append(f"Pix: {formatar_brl(en_pix)}")
+                    if en_cartao > 0: partes_e.append(f"Cartão: {formatar_brl(en_cartao)}")
+                    if en_dinheiro > 0: partes_e.append(f"Dinheiro: {formatar_brl(en_dinheiro)}")
+                    
+                    if partes_e:
+                        detalhe_pagto_edit = "Misto (" + " | ".join(partes_e) + ")"
+
+            btn_atualizar = st.button("🔄 Atualizar no Google Sheets")
+            
+            if btn_atualizar:
+                if modo_escrita_ativo and conn_gsheets is not None:
+                    try:
+                        valor_str_alt = formatar_brl(novo_valor_num)
+                        df.loc[idx, "Status"] = novo_status
+                        df.loc[idx, "Forma Pagamento"] = detalhe_pagto_edit
+                        if col_valor:
+                            df.loc[idx, col_valor] = valor_str_alt
+                            
+                        conn_gsheets.update(data=df)
+                        st.success(f"✅ OS {os_para_editar} atualizada no Google Sheets!")
+                        st.cache_data.clear()
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erro ao atualizar no Google Sheets: {e}")
+                else:
+                    st.warning("⚠️ O sistema está em modo de leitura.")
