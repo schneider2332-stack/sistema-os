@@ -22,7 +22,22 @@ def carregar_dados():
         st.error(f"Erro ao carregar dados do Google Sheets: {e}")
         return pd.DataFrame()
 
-df = carregar_dados()
+@st.cache_data(ttl=0)
+def carregar_dados():
+    try:
+        # Tenta ler a aba principal. Altere "Ordens de Serviço" se a sua guia tiver outro nome!
+        df = conn.read(worksheet="Ordens de Serviço", ttl=0)
+        df = df.dropna(how='all')
+        return df
+    except Exception as e:
+        st.error(f"⚠️ **Detalhes do Erro do Google:** {e}")
+        st.info("""
+        **Checklist de Correção:**
+        1. Verifique se a guia da planilha se chama exatamente `Ordens de Serviço`.
+        2. Garanta que o e-mail `client_email` da Service Account está adicionado como **Editor** no botão Compartilhar da planilha.
+        3. Certifique-se de que a **Google Sheets API** está ativada no Google Cloud Console.
+        """)
+        return pd.DataFrame()
 
 def converter_para_numero(valor):
     if pd.isna(valor):
