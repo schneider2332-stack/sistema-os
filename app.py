@@ -5,11 +5,11 @@ st.set_page_config(page_title="Sistema de OS & Dashboard", layout="wide")
 
 st.title("🛠️ Sistema de Gestão e Dashboard de OS")
 
-# Link formatado para exportação direta em CSV
+# Link do Google Sheets exportado como CSV
 URL_PLANILHA = "https://docs.google.com/spreadsheets/d/1rq9r6Y4MHAf8QxEzxdCz9ty5mNOM5Q7Vc-KIl4VgH5Y/gviz/tq?tqx=out:csv&gid=0"
 
 def identificar_coluna(df, palavras_chave):
-    """Encontra a coluna correta ignorando maiúsculas, minúsculas e espaços extras."""
+    """Auxiliar para encontrar a coluna correta independente de acentos ou maiúsculas/minúsculas."""
     for col in df.columns:
         col_str = str(col).strip().upper()
         if any(p.upper() in col_str for p in palavras_chave):
@@ -19,10 +19,10 @@ def identificar_coluna(df, palavras_chave):
 @st.cache_data(ttl=5)
 def carregar_dados():
     try:
-        # Lê os dados em CSV diretamente do Google Sheets
+        # Lê o ficheiro CSV vindo da planilha
         df_bruto = pd.read_csv(URL_PLANILHA, header=None)
         
-        # Localiza a linha de cabeçalho
+        # Encontra em qual linha estão os nomes das colunas
         linha_cabecalho = None
         for idx, row in df_bruto.iterrows():
             valores_linha = [str(val).strip().upper() for val in row.values if pd.notna(val)]
@@ -37,28 +37,28 @@ def carregar_dados():
         else:
             df = pd.read_csv(URL_PLANILHA, skiprows=3)
 
-        # Remove colunas vazias ou sem nome
+        # Remove colunas vazias/sem nome
         df = df.loc[:, ~df.columns.astype(str).str.contains('^Unnamed|^nan', case=False)]
         df = df.dropna(how='all')
 
         return df
 
     except Exception as e:
-        st.error(f"Erro ao carregar dados da planilha: {e}")
+        st.error(f"Erro ao carregar dados do Google Sheets: {e}")
         return pd.DataFrame()
 
 df = carregar_dados()
 
 if df.empty:
-    st.warning("⚠️ Nenhum dado foi encontrado ou não foi possível ler a planilha.")
+    st.warning("⚠️ Nenhum dado foi encontrado ou a planilha não pôde ser lida.")
 else:
-    # Mapeamento flexível das colunas
+    # Identificação flexível das colunas
     col_os = identificar_coluna(df, ["NÚMERO", "NUMERO", "OS", "Nº"])
     col_cliente = identificar_coluna(df, ["CLIENTE", "NOME"])
     col_valor_total = identificar_coluna(df, ["VALOR TOTAL", "TOTAL", "FATURAMENTO"])
     col_valor_pago = identificar_coluna(df, ["VALOR PAGO", "PAGO", "RECEBIDO"])
 
-    # Navegação
+    # Navegação Lateral
     aba = st.sidebar.radio(
         "Navegação", 
         ["📈 Dashboard Executivo", "🔍 Consultar OS", "📊 Visão Geral / Lista"]
@@ -66,7 +66,7 @@ else:
 
     # 1. Dashboard Executivo
     if aba == "📈 Dashboard Executivo":
-        st.subheader("📈 Dashboard Executivo")
+        st.subheader("📈 Dashboard Executivo de Gestão")
         
         total_os = len(df)
         
@@ -80,10 +80,10 @@ else:
             s_pago = df[col_valor_pago].astype(str).str.replace('R$', '', regex=False).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
             total_recebido = pd.to_numeric(s_pago, errors='coerce').sum()
 
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Total de OS Registadas", total_os)
-        m2.metric("Faturamento Estimado", f"R$ {total_faturado:,.2f}")
-        m3.metric("Total Recebido Estimado", f"R$ {total_recebido:,.2f}")
+        col_m1, col_m2, col_m3 = st.columns(3)
+        col_m1.metric("Total de OS Registadas", total_os)
+        col_m2.metric("Faturamento Estimado", f"R$ {total_faturado:,.2f}")
+        col_m3.metric("Total Recebido Estimado", f"R$ {total_recebido:,.2f}")
 
         st.markdown("---")
         st.dataframe(df, use_container_width=True)
