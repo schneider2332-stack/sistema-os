@@ -6,7 +6,7 @@ st.set_page_config(page_title="Sistema de OS & Dashboard", layout="wide")
 st.title("🛠️ Sistema de Gestão e Dashboard de OS")
 
 # Link formatado para EXPORTAÇÃO CSV direta do Google Sheets (com o gid correto da aba)
-URL_PLANILHA = "https://docs.google.com/spreadsheets/d/19Y3_TJGk0svt-0LAJdQ11MGBsLbAzqbE19kRDChP9tA/export?format=csv&gid=417364075"
+URL_PLANILHA = "https://docs.google.com/spreadsheets/d/19Y3_TJGk0svt-0LAJdQ11MGBsLbAzqbE19kRDChP9tA/export?format=csv&gid=0"
 
 @st.cache_data(ttl=5)
 def carregar_dados():
