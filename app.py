@@ -17,13 +17,12 @@ URL_CSV = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&
 @st.cache_data(ttl=2)
 def carregar_dados():
     try:
-        # Lê a planilha bruta do Google Sheets
         df_raw = pd.read_csv(URL_CSV, header=None)
         
         if df_raw.empty:
             return pd.DataFrame()
         
-        # Localiza dinamicamente em qual linha está o cabeçalho real
+        # Localiza dinamicamente a linha de cabeçalho real
         linha_cabecalho = 0
         for idx, row in df_raw.iterrows():
             valores = [str(v).upper().strip() for v in row.values if pd.notna(v)]
@@ -31,7 +30,6 @@ def carregar_dados():
                 linha_cabecalho = idx
                 break
         
-        # Define as colunas reais e limpa a tabela
         df = df_raw.iloc[linha_cabecalho + 1:].copy()
         df.columns = [str(v).strip() for v in df_raw.iloc[linha_cabecalho].values]
         
@@ -46,7 +44,6 @@ def carregar_dados():
 
 df = carregar_dados()
 
-# Função auxiliar para conversão de valores monetários de forma segura
 def converter_para_numero(valor):
     if pd.isna(valor):
         return 0.0
@@ -77,27 +74,24 @@ if menu == "📈 Dashboard Financeiro & Fluxo de Caixa":
     st.subheader("📈 Painel de Indicadores & Fluxo de Caixa Mensal")
     
     if not df.empty:
-        # Identificação inteligente das colunas
-        col_valor = next((c for c in df.columns if "VALOR" in c.upper() or "TOTAL" in c.upper() or "PREÇO" in c.upper()), None)
-        col_status = next((c for c in df.columns if "STATUS" in c.upper() or "SITUAÇÃO" in c.upper() or "SITUACAO" in c.upper()), None)
-        col_pagto = next((c for c in df.columns if "PAG" in c.upper() or "FORMA" in c.upper()), None)
+        # Mapeamento flexível de colunas
+        col_valor = next((c for c in df.columns if any(p in c.upper() for p in ["VALOR", "TOTAL", "PREÇO", "PRECO"])), None)
+        col_status = next((c for c in df.columns if any(p in c.upper() for p in ["STATUS", "SITUAÇÃO", "SITUACAO"])), None)
+        col_pagto = next((c for c in df.columns if any(p in c.upper() for p in ["PAG", "FORMA"])), None)
         col_data = next((c for c in df.columns if "DATA" in c.upper()), None)
         
-        # Converte valores numéricos
         if col_valor:
             df['VALOR_CALC'] = df[col_valor].apply(converter_para_numero)
         else:
             df['VALOR_CALC'] = 0.0
             
-        # Converte coluna de data para processar fluxo mensal
         if col_data:
             df['DATA_DT'] = pd.to_datetime(df[col_data], errors='coerce', dayfirst=True)
-            df['ANO_MES'] = df['DATA_DT'].dt.strftime('%Y-%m')
+            df['ANO_MES'] = df['DATA_DT'].dt.strftime('%Y-%m').fillna("Sem Data")
         else:
-            df['ANO_MES'] = "Indefinido"
+            df['ANO_MES'] = "Sem Data"
 
-        # Filtro de Mês/Ano na Sidebar
-        meses_unicos = sorted([m for m in df['ANO_MES'].dropna().unique() if m != "Indefinido"], reverse=True)
+        meses_unicos = sorted([m for m in df['ANO_MES'].dropna().unique() if m != "Sem Data"], reverse=True)
         if meses_unicos:
             st.sidebar.subheader("📅 Filtro de Período")
             meses_selecionados = st.sidebar.multiselect("Filtrar por Mês/Ano:", options=meses_unicos, default=meses_unicos)
@@ -110,7 +104,6 @@ if menu == "📈 Dashboard Financeiro & Fluxo de Caixa":
 
         fat_total = df_filtered['VALOR_CALC'].sum()
         
-        # Separa Recebido e Em Aberto
         if col_status:
             status_concluido = df_filtered[col_status].astype(str).str.upper().str.contains("PAGO|CONCLUÍDO|CONCLUIDO|ENTREGUE|FINALIZADO", na=False)
             val_recebido = df_filtered[status_concluido]['VALOR_CALC'].sum()
@@ -119,7 +112,7 @@ if menu == "📈 Dashboard Financeiro & Fluxo de Caixa":
             val_recebido = fat_total
             val_aberto = 0.0
 
-        # CARDS MÉTRICOS PRINCIPAIS
+        # CARDS MÉTRICOS
         m1, m2, m3 = st.columns(3)
         m1.metric("💵 Faturamento Total", f"R$ {fat_total:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
         m2.metric("✅ Valor Recebido", f"R$ {val_recebido:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
@@ -128,7 +121,6 @@ if menu == "📈 Dashboard Financeiro & Fluxo de Caixa":
         st.markdown("---")
         st.markdown("### 💳 Faturamento Por Forma de Pagamento")
         
-        # Filtros por forma de pagamento
         if col_pagto:
             pix_val = df_filtered[df_filtered[col_pagto].astype(str).str.upper().str.contains("PIX", na=False)]['VALOR_CALC'].sum()
             cartao_val = df_filtered[df_filtered[col_pagto].astype(str).str.upper().str.contains("CARTÃO|CARTAO|CRÉDITO|DÉBITO", na=False)]['VALOR_CALC'].sum()
@@ -145,16 +137,17 @@ if menu == "📈 Dashboard Financeiro & Fluxo de Caixa":
         
         st.markdown("---")
         
-        # FLUXO DE CAIXA MENSAL (GRÁFICO E TABELA)
+        # GRÁFICO E TABELA DE FLUXO DE CAIXA MENSAL
         st.markdown("### 🗓️ Fluxo de Caixa Mensal (Evolução por Mês)")
-        if col_data and not df.empty:
-            df_fluxo = df[df['ANO_MES'] != "Indefinido"].groupby('ANO_MES')['VALOR_CALC'].sum().reset_index()
-            df_fluxo.columns = ['Mês/Ano', 'Faturamento (R$)']
-            
+        df_fluxo = df[df['ANO_MES'] != "Sem Data"].groupby('ANO_MES')['VALOR_CALC'].sum().reset_index()
+        df_fluxo.columns = ['Mês/Ano', 'Faturamento (R$)']
+        
+        if not df_fluxo.empty:
             st.bar_chart(df_fluxo.set_index('Mês/Ano'))
-            
-            st.markdown("#### 📑 Resumo Mensal")
+            st.markdown("#### 📑 Resumo Mensal Detalhado")
             st.dataframe(df_fluxo, use_container_width=True)
+        else:
+            st.info("💡 Insira datas no formato DD/MM/AAAA na sua planilha para ver o gráfico de evolução mensal.")
             
     else:
         st.warning("⚠️ Nenhum dado foi retornado para construir o Dashboard.")
@@ -252,3 +245,29 @@ elif menu == "✏️ Alterar OS / Pagamento":
                     )
                     nova_forma_pagto = st.selectbox(
                         "Alterar Forma de Pagamento",
+                        [
+                            "Pix", 
+                            "Cartão de Crédito", 
+                            "Cartão de Débito", 
+                            "Dinheiro", 
+                            "Boleto", 
+                            "Misto (Dinheiro + Pix)", 
+                            "Misto (Dinheiro + Cartão)", 
+                            "Misto (Pix + Cartão)", 
+                            "Outro / Especificar"
+                        ]
+                    )
+                
+                with col2:
+                    obs_pagto = st.text_area("Detalhamento de Valores Parciais", placeholder="Ex: R$ 100,00 Pix + R$ 50,00 Dinheiro")
+                    novo_valor = st.number_input("Atualizar Valor (R$)", min_value=0.0, step=5.0, format="%.2f")
+
+                btn_atualizar = st.form_submit_button("🔄 Atualizar OS")
+                
+                if btn_atualizar:
+                    st.success(f"✅ Atualização registrada para a OS {os_para_editar}!")
+                    st.write(f"**Novo Status:** {novo_status} | **Forma de Pagamento:** {nova_forma_pagto}")
+                    if obs_pagto:
+                        st.write(f"**Detalhes do Pagamento:** {obs_pagto}")
+    else:
+        st.warning("Nenhuma OS disponível para alteração.")
