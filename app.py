@@ -5,8 +5,8 @@ st.set_page_config(page_title="Sistema de OS & Dashboard", layout="wide")
 
 st.title("🛠️ Sistema de Gestão e Dashboard de OS")
 
-# Link formatado para EXPORTAÇÃO CSV direta (necessário para o pandas)
-URL_PLANILHA = "https://docs.google.com/spreadsheets/d/1rq9r6Y4MHAf8QxEzxdCz9ty5mNOM5Q7Vc-KIl4VgH5Y/edit?usp=sharing&gid=0"
+# URL formatada para exportação direta em CSV
+URL_PLANILHA = "https://docs.google.com/spreadsheets/d/1rq9r6Y4MHAf8QxEzxdCz9ty5mNOM5Q7Vc-KIl4VgH5Y/gviz/tq?tqx=out:csv&gid=0"
 
 @st.cache_data(ttl=5)
 def carregar_dados():
@@ -14,7 +14,7 @@ def carregar_dados():
         # 1. Lê a planilha bruta sem assumir cabeçalho fixo
         df_bruto = pd.read_csv(URL_PLANILHA, header=None)
         
-        # 2. Localiza em qual linha estão os nomes reais das colunas (procura por "OS" ou "CLIENTE")
+        # 2. Localiza a linha com o cabeçalho das colunas (procura por OS ou CLIENTE)
         linha_cabecalho = None
         for idx, row in df_bruto.iterrows():
             valores_linha = [str(val).strip().upper() for val in row.values if pd.notna(val)]
@@ -22,7 +22,7 @@ def carregar_dados():
                 linha_cabecalho = idx
                 break
 
-        # 3. Se encontrou a linha do cabeçalho, reestrutura o dataframe
+        # 3. Se encontrou o cabeçalho, reestrutura a tabela
         if linha_cabecalho is not None:
             df = df_bruto.iloc[linha_cabecalho + 1:].copy()
             df.columns = [str(c).strip() for c in df_bruto.iloc[linha_cabecalho].values]
@@ -30,7 +30,7 @@ def carregar_dados():
         else:
             df = pd.read_csv(URL_PLANILHA, skiprows=3)
 
-        # 4. Remove colunas sem nome ou nulas
+        # 4. Remove colunas vazias
         df = df.loc[:, ~df.columns.astype(str).str.contains('^Unnamed|^nan', case=False)]
         df = df.dropna(how='all')
 
