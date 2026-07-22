@@ -7,7 +7,7 @@ st.title("🛠️ Sistema de Gestão e Dashboard de OS")
 
 # Link do Google Sheets (exportação em formato CSV)
 # Caso a sua aba de OSs tenha um gid diferente, troque o 'gid=0' pelo número da sua aba no link do navegador.
-URL_PLANILHA = "https://docs.google.com/spreadsheets/d/1rq9r6Y4MHAf8QxEzxdCz9ty5mNOM5Q7Vc-KIl4VgH5Y/gviz/tq?tqx=out:csv&gid=0"
+URL_PLANILHA = "https://docs.google.com/spreadsheets/d/1rq9r6Y4MHAf8QxEzxdCz9ty5mNOM5Q7Vc-KIl4VgH5Y/edit?usp=sharing&gid=0"
 
 @st.cache_data(ttl=5)
 def carregar_dados():
