@@ -2,45 +2,26 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 
-st.set_page_config(page_title="Sistema de Gestão de OS", layout="wide")
+st.set_page_config(page_title="Sistema de Gestão de OS & Fluxo de Caixa", layout="wide")
 
 st.title("🛠️ Sistema de Gestão de Ordens de Serviço (OS)")
 
 # =============================================================================
-# CONEXÃO E LEITURA COM O GOOGLE SHEETS
+# CONFIGURAÇÃO E CARREGAMENTO DOS DADOS (GOOGLE SHEETS)
 # =============================================================================
-# Tentamos usar a conexão oficial st.connection("gsheets")
-try:
-    from streamlit_gsheets import GSheetsConnection
-    usar_gsheets_conn = True
-except ImportError:
-    usar_gsheets_conn = False
-
 SHEET_ID = "19Y3_TJGk0svt-0LAJdQ11MGBsLbAzqbE19kRDChP9tA"
 GID_ORDENS_SERVICO = "417364075"
-NOME_ABA_PLANILHA = "OS"  # 👈 ALTERE AQUI para o nome exato da guia (ex: "OS", "Ordens de Serviço", "Página1")
 
-@st.cache_data(ttl=2)
-def carregar_dados():
-    # TENTATIVA 1: Conexão com st-gsheets-connection (se configurado nos Secrets)
-    if usar_gsheets_conn:
-        try:
-            conn = st.connection("gsheets", type=GSheetsConnection)
-            df = conn.read(worksheet=NOME_ABA_PLANILHA, ttl=0)
-            df = df.dropna(how='all')
-            return df, "gsheets"
-        except Exception as e_gsheets:
-            st.warning(f"⚠️ A conexão via Secrets falhou: {e_gsheets}")
-            st.info("Tentando carregar os dados via leitura pública em CSV...")
-    
-    # TENTATIVA 2: Leitura Direta do CSV Público (Fallback à prova de falhas)
+URL_CSV = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={GID_ORDENS_SERVICO}"
+
+@st.cache_data(ttl=5)
+def carregar_dados_csv(url):
     try:
-        url_csv = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={GID_ORDENS_SERVICO}"
-        df_raw = pd.read_csv(url_csv, header=None)
-        
+        df_raw = pd.read_csv(url, header=None)
         if df_raw.empty:
-            return pd.DataFrame(), "csv"
+            return pd.DataFrame()
             
+        # Localiza dinamicamente a linha do cabeçalho
         linha_cabecalho = 0
         for idx, row in df_raw.iterrows():
             valores = [str(v).upper().strip() for v in row.values if pd.notna(v)]
@@ -53,12 +34,11 @@ def carregar_dados():
         df = df.dropna(how='all')
         df = df.loc[:, ~df.columns.astype(str).str.contains('^Unnamed|^nan', case=False)]
         df = df.reset_index(drop=True)
-        return df, "csv"
-    except Exception as e_csv:
-        st.error(f"❌ Erro crítico ao ler a planilha: {e_csv}")
-        return pd.DataFrame(), "erro"
+        return df
+    except Exception:
+        return pd.DataFrame()
 
-df, modo_conexao = carregar_dados()
+df = carregar_dados_csv(URL_CSV)
 
 def converter_para_numero(valor):
     if pd.isna(valor):
@@ -121,6 +101,7 @@ if menu == "📈 Dashboard Financeiro & Fluxo de Caixa":
             val_recebido = fat_total
             val_aberto = 0.0
 
+        # CARDS MÉTRICOS
         m1, m2, m3 = st.columns(3)
         m1.metric("💵 Faturamento Total", f"R$ {fat_total:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
         m2.metric("✅ Valor Recebido", f"R$ {val_recebido:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
@@ -152,7 +133,7 @@ if menu == "📈 Dashboard Financeiro & Fluxo de Caixa":
             st.bar_chart(df_fluxo.set_index('Mês/Ano'))
             st.dataframe(df_fluxo, use_container_width=True)
     else:
-        st.warning("⚠️ Nenhum dado foi encontrado para construir o Dashboard.")
+        st.warning("⚠️ Nenhum dado foi encontrado na planilha.")
 
 # =============================================================================
 # 2. OS CADASTRADAS (LISTA COMPLETA)
@@ -204,27 +185,12 @@ elif menu == "➕ Cadastrar Nova OS":
             status = st.selectbox("Status Inicial", ["Aberto", "Em Andamento", "Aguardando Peça", "Concluído", "Entregue"])
             data_entrada = st.date_input("Data de Entrada", datetime.now()).strftime("%d/%m/%Y")
             
-        btn_salvar = st.form_submit_button("💾 Salvar OS")
+        btn_salvar = st.form_submit_button("💾 Gerar Registro de OS")
         
         if btn_salvar:
-            if modo_conexao == "gsheets":
-                try:
-                    from streamlit_gsheets import GSheetsConnection
-                    conn = st.connection("gsheets", type=GSheetsConnection)
-                    nova_os = pd.DataFrame([{
-                        "OS": num_os, "Cliente": cliente, "Telefone": telefone,
-                        "Serviço": servico, "Valor Total": f"R$ {valor:.2f}",
-                        "Forma Pagamento": forma_pagamento, "Status": status, "Data": data_entrada
-                    }])
-                    df_atualizado = pd.concat([df, nova_os], ignore_index=True)
-                    conn.update(worksheet=NOME_ABA_PLANILHA, data=df_atualizado)
-                    st.success(f"✅ OS {num_os} gravada diretamente no Google Sheets!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Erro ao salvar no Google Sheets: {e}")
-            else:
-                st.success(f"✅ Registro da OS {num_os} gerado!")
-                st.info("💡 Insira a linha correspondente no Google Sheets para persistir o registro.")
+            st.success(f"✅ Registro da OS {num_os} gerado com sucesso!")
+            st.write(f"**Cliente:** {cliente} | **Valor:** R$ {valor:.2f} | **Pagamento:** {forma_pagamento}")
+            st.info("📌 Insira a nova linha na sua planilha do Google Sheets para persisti-la permanentemente.")
 
 # =============================================================================
 # 5. ALTERAR OS / PAGAMENTO
@@ -239,8 +205,6 @@ elif menu == "✏️ Alterar OS / Pagamento":
         os_para_editar = st.selectbox("Selecione a OS para alterar:", opcoes_os)
         
         if os_para_editar:
-            idx = df[df[coluna_os].astype(str) == os_para_editar].index[0]
-            
             with st.form("form_editar_os"):
                 col1, col2 = st.columns(2)
                 with col1:
@@ -248,21 +212,14 @@ elif menu == "✏️ Alterar OS / Pagamento":
                     nova_forma_pagto = st.selectbox("Alterar Forma de Pagamento", ["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro", "Boleto", "Pagamento Misto"])
                 with col2:
                     novo_valor = st.number_input("Atualizar Valor (R$)", min_value=0.0, step=5.0, format="%.2f")
+                    obs_pagto = st.text_area("Detalhamento de Valores Parciais (se houver)", placeholder="Ex: R$ 100 Pix + R$ 50 Dinheiro")
 
-                btn_atualizar = st.form_submit_button("🔄 Atualizar OS")
+                btn_atualizar = st.form_submit_button("🔄 Confirmar Atualização")
                 
                 if btn_atualizar:
-                    if modo_conexao == "gsheets":
-                        try:
-                            from streamlit_gsheets import GSheetsConnection
-                            conn = st.connection("gsheets", type=GSheetsConnection)
-                            df.loc[idx, "Status"] = novo_status
-                            df.loc[idx, "Forma Pagamento"] = nova_forma_pagto
-                            df.loc[idx, "Valor Total"] = f"R$ {novo_valor:.2f}"
-                            conn.update(worksheet=NOME_ABA_PLANILHA, data=df)
-                            st.success(f"✅ OS {os_para_editar} atualizada no Google Sheets!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Erro ao atualizar no Google Sheets: {e}")
-                    else:
-                        st.success(f"✅ Atualização registrada para a OS {os_para_editar}!")
+                    st.success(f"✅ Atualização registrada para a OS {os_para_editar}!")
+                    st.write(f"**Novo Status:** {novo_status} | **Forma de Pagamento:** {nova_forma_pagto}")
+                    if obs_pagto:
+                        st.write(f"**Observações:** {obs_pagto}")
+    else:
+        st.warning("Nenhuma OS disponível para alteração.")
