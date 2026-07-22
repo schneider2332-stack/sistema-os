@@ -8,39 +8,43 @@ st.title("🛠️ Sistema de Gestão de Ordens de Serviço (OS)")
 
 SHEET_ID = "19Y3_TJGk0svt-0LAJdQ11MGBsLbAzqbE19kRDChP9tA"
 GID_ORDENS_SERVICO = "417364075"
-NOME_ABA_PLANILHA = "OS"  # 👈 Nome da aba/guia no Google Sheets
 
 # =============================================================================
-# TENTATIVA DE CONEXÃO DE ESCRITA (GSheets API)
+# CONEXÃO DIRETA COM O GOOGLE SHEETS
 # =============================================================================
-usar_escrita = False
 conn_gsheets = None
+modo_escrita_ativo = False
+mensagem_erro_escrita = ""
 
 try:
     from streamlit_gsheets import GSheetsConnection
-    # Tenta obter a conexão configurada nos Secrets
     conn_gsheets = st.connection("gsheets", type=GSheetsConnection)
-    usar_escrita = True
-except Exception:
-    usar_escrita = False
+    modo_escrita_ativo = True
+except Exception as e:
+    modo_escrita_ativo = False
+    mensagem_erro_escrita = str(e)
 
-@st.cache_data(ttl=2)
+@st.cache_data(ttl=1)
 def carregar_dados():
-    # Se houver conexão de escrita ativa via Secrets
-    if usar_escrita and conn_gsheets is not None:
+    global modo_escrita_ativo, mensagem_erro_escrita
+    
+    # Tentativa 1: Leitura usando GSheetsConnection (Escrita habilitada)
+    if modo_escrita_ativo and conn_gsheets is not None:
         try:
-            df = conn_gsheets.read(worksheet=NOME_ABA_PLANILHA, ttl=0)
+            # Tenta ler a planilha principal
+            df = conn_gsheets.read(ttl=0)
             df = df.dropna(how='all')
-            return df, True
-        except Exception:
-            pass
-
-    # Fallback: Leitura via CSV Público
+            return df, True, ""
+        except Exception as e:
+            modo_escrita_ativo = False
+            mensagem_erro_escrita = str(e)
+            
+    # Tentativa 2: Fallback para leitura via CSV público
     try:
         url_csv = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={GID_ORDENS_SERVICO}"
         df_raw = pd.read_csv(url_csv, header=None)
         if df_raw.empty:
-            return pd.DataFrame(), False
+            return pd.DataFrame(), False, mensagem_erro_escrita
             
         linha_cabecalho = 0
         for idx, row in df_raw.iterrows():
@@ -54,11 +58,11 @@ def carregar_dados():
         df = df.dropna(how='all')
         df = df.loc[:, ~df.columns.astype(str).str.contains('^Unnamed|^nan', case=False)]
         df = df.reset_index(drop=True)
-        return df, False
-    except Exception:
-        return pd.DataFrame(), False
+        return df, False, mensagem_erro_escrita
+    except Exception as e_csv:
+        return pd.DataFrame(), False, f"Erro CSV: {e_csv}"
 
-df, modo_escrita_ativo = carregar_dados()
+df, modo_escrita_ativo, detalhe_erro = carregar_dados()
 
 def converter_para_numero(valor):
     if pd.isna(valor):
@@ -70,7 +74,7 @@ def converter_para_numero(valor):
         return 0.0
 
 # =============================================================================
-# MENU LATERAL DE NAVEGAÇÃO
+# MENU LATERAL DE NAVEGAÇÃO E DIAGNÓSTICO DE CONEXÃO
 # =============================================================================
 menu = st.sidebar.radio(
     "📌 Navegação do Sistema",
@@ -83,11 +87,14 @@ menu = st.sidebar.radio(
     ]
 )
 
-# Status de Gravação na Sidebar
+st.sidebar.markdown("---")
 if modo_escrita_ativo:
-    st.sidebar.success("🟢 Gravação Direta no Google Sheets: ATIVA")
+    st.sidebar.success("🟢 Gravação Direta: ATIVA")
 else:
-    st.sidebar.warning("🟡 Modo de Leitura (Sem permissão de gravação)")
+    st.sidebar.warning("🟡 Modo de Leitura (Somente Leitura)")
+    if detalhe_erro:
+        with st.sidebar.expander("🔍 Detalhes do Diagnóstico"):
+            st.caption(detalhe_erro)
 
 # =============================================================================
 # 1. DASHBOARD FINANCEIRO E FLUXO DE CAIXA MENSAL
@@ -127,7 +134,6 @@ if menu == "📈 Dashboard Financeiro & Fluxo de Caixa":
             val_recebido = fat_total
             val_aberto = 0.0
 
-        # CARDS MÉTRICOS
         m1, m2, m3 = st.columns(3)
         m1.metric("💵 Faturamento Total", f"R$ {fat_total:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
         m2.metric("✅ Valor Recebido", f"R$ {val_recebido:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
@@ -159,7 +165,7 @@ if menu == "📈 Dashboard Financeiro & Fluxo de Caixa":
             st.bar_chart(df_fluxo.set_index('Mês/Ano'))
             st.dataframe(df_fluxo, use_container_width=True)
     else:
-        st.warning("⚠️ Nenhum dado foi encontrado na planilha.")
+        st.warning("⚠️ Nenhum dado retornado da planilha.")
 
 # =============================================================================
 # 2. OS CADASTRADAS (LISTA COMPLETA)
@@ -187,8 +193,6 @@ elif menu == "🔍 Consultar / Detalhar OS":
         if os_escolhida:
             dados = df[df[coluna_os].astype(str) == os_escolhida]
             st.dataframe(dados, use_container_width=True)
-    else:
-        st.warning("Sem dados disponíveis para busca.")
 
 # =============================================================================
 # 4. CADASTRAR NOVA OS
@@ -211,7 +215,7 @@ elif menu == "➕ Cadastrar Nova OS":
             status = st.selectbox("Status Inicial", ["Aberto", "Em Andamento", "Aguardando Peça", "Concluído", "Entregue"])
             data_entrada = st.date_input("Data de Entrada", datetime.now()).strftime("%d/%m/%Y")
             
-        btn_salvar = st.form_submit_button("💾 Salvar OS")
+        btn_salvar = st.form_submit_button("💾 Salvar no Google Sheets")
         
         if btn_salvar:
             nova_os = pd.DataFrame([{
@@ -223,14 +227,14 @@ elif menu == "➕ Cadastrar Nova OS":
             if modo_escrita_ativo and conn_gsheets is not None:
                 try:
                     df_atualizado = pd.concat([df, nova_os], ignore_index=True)
-                    conn_gsheets.update(worksheet=NOME_ABA_PLANILHA, data=df_atualizado)
-                    st.success(f"✅ OS {num_os} gravada diretamente no Google Sheets!")
+                    conn_gsheets.update(data=df_atualizado)
+                    st.success(f"✅ OS {num_os} salva diretamente no Google Sheets!")
+                    st.cache_data.clear()
                     st.rerun()
                 except Exception as e:
                     st.error(f"Erro ao salvar no Google Sheets: {e}")
             else:
-                st.warning("⚠️ O sistema está em modo de apenas leitura.")
-                st.info("Para salvar automaticamente no Google Sheets sem abrir o Drive, é necessário adicionar a chave [connections.gsheets] na caixa de Secrets no Streamlit Cloud.")
+                st.warning("⚠️ O sistema está em modo de leitura.")
 
 # =============================================================================
 # 5. ALTERAR OS / PAGAMENTO
@@ -255,7 +259,7 @@ elif menu == "✏️ Alterar OS / Pagamento":
                 with col2:
                     novo_valor = st.number_input("Atualizar Valor (R$)", min_value=0.0, step=5.0, format="%.2f")
 
-                btn_atualizar = st.form_submit_button("🔄 Confirmar Atualização")
+                btn_atualizar = st.form_submit_button("🔄 Atualizar no Google Sheets")
                 
                 if btn_atualizar:
                     if modo_escrita_ativo and conn_gsheets is not None:
@@ -263,10 +267,11 @@ elif menu == "✏️ Alterar OS / Pagamento":
                             df.loc[idx, "Status"] = novo_status
                             df.loc[idx, "Forma Pagamento"] = nova_forma_pagto
                             df.loc[idx, "Valor Total"] = f"R$ {novo_valor:.2f}"
-                            conn_gsheets.update(worksheet=NOME_ABA_PLANILHA, data=df)
+                            conn_gsheets.update(data=df)
                             st.success(f"✅ OS {os_para_editar} atualizada no Google Sheets!")
+                            st.cache_data.clear()
                             st.rerun()
                         except Exception as e:
                             st.error(f"Erro ao atualizar no Google Sheets: {e}")
                     else:
-                        st.warning("⚠️ O sistema está em modo de apenas leitura.")
+                        st.warning("⚠️ O sistema está em modo de leitura.")
