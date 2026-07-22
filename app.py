@@ -6,27 +6,17 @@ st.set_page_config(page_title="Sistema de OS & Dashboard (Online)", layout="wide
 
 st.title("🛠️ Sistema de Gestão e Dashboard de OS (Nuvem)")
 
-# URL pública da sua planilha do Google Sheets (exportada em formato CSV para leitura direta e ágil)
-# Substitua o ID abaixo caso utilize outra planilha no futuro
-SPREADSHEET_ID = "14x8Q_74Y5N12_1S5r0jXqQ5b7v8m9L0K1J2I3H4G5F" # Pode manter ou colar a URL completa no secrets
+# ID da sua planilha extraído do seu link
+SPREADSHEET_ID = "14x8Q_74Y5N12_1S5r0jXqQ5b7v8m9L0K1J2I3H4G5F"
+
+# URL de leitura rápida e direta do Google Sheets (formato CSV)
 GSHEETS_URL = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet=Ordens%20de%20Servi%C3%A7o"
 
-# Função para carregar os dados diretamente do Google Sheets
 @st.cache_data(ttl=5)
 def carregar_dados():
     try:
-        # Tenta buscar a URL configurada nos secrets, caso contrário usa a URL direta
-        try:
-            url_planilha = st.secrets["connections"]["gsheets"]["spreadsheet"]
-            if "/edit" in url_planilha:
-                url_csv = url_planilha.replace("/edit?usp=sharing", "/gviz/tq?tqx=out:csv&sheet=Ordens%20de%20Servi%C3%A7o").replace("/edit", "/gviz/tq?tqx=out:csv&sheet=Ordens%20de%20Servi%C3%A7o")
-            else:
-                url_csv = url_planilha
-        except:
-            url_csv = GSHEETS_URL
-
-        # Lê os dados pulando os cabeçalhos das primeiras 3 linhas
-        df = pd.read_csv(url_csv, skiprows=3)
+        # Lê os dados do Google Sheets ignorando as 3 primeiras linhas do cabeçalho
+        df = pd.read_csv(GSHEETS_URL, skiprows=3)
         df = df.loc[:, ~df.columns.astype(str).str.contains('^Unnamed')]
         
         colunas_texto = ['Situação', 'Cliente', 'Descrição do Serviço', 'Observações', 'Telefone', 'Cidade']
@@ -35,8 +25,8 @@ def carregar_dados():
                 df[col] = df[col].astype(str).replace('nan', '')
         return df
     except Exception as e:
-        st.error(f"Erro ao carregar dados do Google Sheets: {e}")
-        st.info("💡 Certifique-se de que a planilha no Google Drive está compartilhada como 'Qualquer pessoa com o link'.")
+        st.error(f"Erro ao carregar os dados do Google Sheets: {e}")
+        st.info("💡 Verifique se a sua planilha no Google Drive está com o compartilhamento como 'Qualquer pessoa com o link'.")
         return pd.DataFrame()
 
 df = carregar_dados()
@@ -104,7 +94,7 @@ if not df.empty:
     # ABA 2: CONSULTAR / ALTERAR OS
     # =========================================================================
     elif aba == "🔍 Consultar / Alterar OS":
-        st.subheader("📋 Consultar e Atualizar OS")
+        st.subheader("📋 Consultar e Detalhar OS")
 
         if 'Número da OS' in df.columns:
             df_validas = df.dropna(subset=['Número da OS'])
@@ -119,77 +109,26 @@ if not df.empty:
 
                     st.info(f"👤 **Cliente:** {dados_os.get('Cliente', 'N/D')} | 🛠️ **Serviço:** {dados_os.get('Descrição do Serviço', 'N/D')}")
 
-                    with st.form("form_alteracao"):
-                        col1, col2 = st.columns(2)
-                        
-                        with col1:
-                            st.markdown("##### 📌 Dados do Serviço e Situação")
-                            situacao_atual = str(dados_os.get('Situação', 'Em Aberto'))
-                            opcoes_situacao = ["Em Aberto", "Em Andamento", "Aguardando Pagamento", "Pendente", "Concluída", "Cancelada"]
-                            index_padrao = opcoes_situacao.index(situacao_atual) if situacao_atual in opcoes_situacao else 0
-                            nova_situacao = st.selectbox("Situação da OS:", opcoes_situacao, index=index_padrao)
-                            
-                            val_tot = pd.to_numeric(dados_os.get('Valor Total', 0.0), errors='coerce')
-                            novo_valor_total = st.number_input("Valor Total (R$):", value=float(0.0 if pd.isna(val_tot) else val_tot))
-                            
-                            val_pag = pd.to_numeric(dados_os.get('Valor Pago', 0.0), errors='coerce')
-                            novo_valor_pago = st.number_input("Valor Pago Total (R$):", value=float(0.0 if pd.isna(val_pag) else val_pag))
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.write(f"**Situação:** {dados_os.get('Situação', 'N/D')}")
+                        st.write(f"**Valor Total:** R$ {pd.to_numeric(dados_os.get('Valor Total', 0), errors='coerce'):,.2f}")
+                        st.write(f"**Valor Pago:** R$ {pd.to_numeric(dados_os.get('Valor Pago', 0), errors='coerce'):,.2f}")
+                    with col2:
+                        st.write(f"**Pix:** R$ {pd.to_numeric(dados_os.get('Pix', 0), errors='coerce'):,.2f}")
+                        st.write(f"**Cartão:** R$ {pd.to_numeric(dados_os.get('Cartão', 0), errors='coerce'):,.2f}")
+                        st.write(f"**Boleto:** R$ {pd.to_numeric(dados_os.get('Boleto', 0), errors='coerce'):,.2f}")
+                        st.write(f"**Dinheiro:** R$ {pd.to_numeric(dados_os.get('Dinheiro', 0), errors='coerce'):,.2f}")
 
-                        with col2:
-                            st.markdown("##### 💳 Formas de Pagamento")
-                            pix = st.number_input("Pago via Pix (R$):", value=float(pd.to_numeric(dados_os.get('Pix', 0.0), errors='coerce') or 0.0))
-                            cartao = st.number_input("Pago via Cartão (R$):", value=float(pd.to_numeric(dados_os.get('Cartão', 0.0), errors='coerce') or 0.0))
-                            boleto = st.number_input("Pago via Boleto (R$):", value=float(pd.to_numeric(dados_os.get('Boleto', 0.0), errors='coerce') or 0.0))
-                            dinheiro = st.number_input("Pago em Dinheiro (R$):", value=float(pd.to_numeric(dados_os.get('Dinheiro', 0.0), errors='coerce') or 0.0))
-
-                        st.markdown("---")
-                        novas_obs = st.text_area("Observações:", value=str(dados_os.get('Observações', '')))
-
-                        btn_salvar = st.form_submit_button("💾 Salvar Alterações na Nuvem")
-
-                        if btn_salvar:
-                            st.info("Para salvar alterações permanentemente no Google Sheets online, você pode editar diretamente a linha correspondente na sua planilha no Google Drive.")
+                    st.markdown("---")
+                    st.write(f"**Observações:** {dados_os.get('Observações', '')}")
 
     # =========================================================================
     # ABA 3: CADASTRAR NOVA OS
     # =========================================================================
     elif aba == "➕ Cadastrar Nova OS":
         st.subheader("➕ Inserir Nova Ordem de Serviço")
-
-        try:
-            proxima_os = int(pd.to_numeric(df['Número da OS'], errors='coerce').max() + 1)
-        except:
-            proxima_os = 1001
-
-        with st.form("form_nova_os"):
-            c1, c2 = st.columns(2)
-
-            with c1:
-                st.markdown("##### 👤 Informações do Cliente e OS")
-                num_os = st.number_input("Número da OS:", value=proxima_os, step=1)
-                data_os = st.date_input("Data:", value=date.today())
-                cliente = st.text_input("Nome do Cliente:")
-                telefone = st.text_input("Telefone:")
-                cidade = st.text_input("Cidade:", value="Florianópolis")
-                descricao = st.text_area("Descrição do Serviço:")
-
-            with c2:
-                st.markdown("##### 💰 Valores e Forma de Pagamento")
-                valor_total = st.number_input("Valor Total do Serviço (R$):", value=0.0)
-                situacao_inicial = st.selectbox("Situação Inicial:", ["Em Aberto", "Em Andamento", "Aguardando Pagamento", "Concluída"])
-                
-                st.markdown("**Valores Recebidos (se houver pagamento no ato):**")
-                pix = st.number_input("Pix (R$):", value=0.0)
-                cartao = st.number_input("Cartão (R$):", value=0.0)
-                boleto = st.number_input("Boleto (R$):", value=0.0)
-                dinheiro = st.number_input("Dinheiro (R$):", value=0.0)
-
-            obs = st.text_area("Observações da OS:")
-
-            btn_cadastrar = st.form_submit_button("➕ Salvar Nova OS na Nuvem")
-
-            if btn_cadastrar:
-                st.info("Para adicionar novas OS diretamente, insira os dados na última linha disponível da sua planilha no Google Sheets.")
+        st.info("Para cadastrar ou editar registros diretamente no Google Sheets, acesse a sua planilha compartilhada no Google Drive.")
 
     # =========================================================================
     # ABA 4: VISÃO GERAL / LISTA COMPLETA
