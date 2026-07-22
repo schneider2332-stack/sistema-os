@@ -2,18 +2,34 @@ import streamlit as st
 import pandas as pd
 from datetime import date
 
-st.set_page_config(page_title="Sistema de OS & Dashboard (Online)", layout="wide")
+st.set_page_config(page_title="Sistema de OS & Dashboard", layout="wide")
 
 st.title("🛠️ Sistema de Gestão e Dashboard de OS")
 
-# Link direto da sua planilha no Google Sheets (exportação em CSV sem exigir Secrets)
-URL_PLANILHA = "https://docs.google.com/spreadsheets/d/14x8Q_74Y5N12_1S5r0jXqQ5b7v8m9L0K1J2I3H4G5F/gviz/tq?tqx=out:csv&sheet=Ordens%20de%20Servi%C3%A7o"
+# ⚠️ COLE AQUI A URL COMPLETA DA SUA PLANILHA COPIADA DO NAVEGADOR (mantendo as aspas)
+URL_EDITABLE_PLANILHA = "https://docs.google.com/spreadsheets/d/1rq9r6Y4MHAf8QxEzxdCz9ty5mNOM5Q7Vc-KIl4VgH5Y/edit?usp=sharing"
+
+# Função para converter a URL normal em link de download CSV automático
+def obter_url_csv(url):
+    try:
+        if "/edit" in url:
+            base_url = url.split("/edit")[0]
+            # Se houver gid (aba específica), extrai
+            if "gid=" in url:
+                gid = url.split("gid=")[1].split("&")[0]
+                return f"{base_url}/export?format=csv&gid={gid}"
+            return f"{base_url}/export?format=csv"
+        return url
+    except:
+        return url
 
 @st.cache_data(ttl=2)
 def carregar_dados():
     try:
-        # Lê os dados diretamente do link CSV do Google Sheets
-        df = pd.read_csv(URL_PLANILHA, skiprows=3)
+        url_csv = obter_url_csv(URL_EDITABLE_PLANILHA)
+        
+        # Lê os dados ignorando as 3 primeiras linhas de cabeçalho
+        df = pd.read_csv(url_csv, skiprows=3)
         df = df.loc[:, ~df.columns.astype(str).str.contains('^Unnamed')]
         
         colunas_texto = ['Situação', 'Cliente', 'Descrição do Serviço', 'Observações', 'Telefone', 'Cidade']
