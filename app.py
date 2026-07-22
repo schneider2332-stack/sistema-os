@@ -2,26 +2,46 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 
-st.set_page_config(page_title="Sistema de Gestão de OS & Fluxo de Caixa", layout="wide")
+st.set_page_config(page_title="Sistema de Gestão de OS", layout="wide")
 
 st.title("🛠️ Sistema de Gestão de Ordens de Serviço (OS)")
 
-# =============================================================================
-# CONFIGURAÇÃO E CARREGAMENTO DOS DADOS (GOOGLE SHEETS)
-# =============================================================================
 SHEET_ID = "19Y3_TJGk0svt-0LAJdQ11MGBsLbAzqbE19kRDChP9tA"
 GID_ORDENS_SERVICO = "417364075"
+NOME_ABA_PLANILHA = "OS"  # 👈 Nome da aba/guia no Google Sheets
 
-URL_CSV = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={GID_ORDENS_SERVICO}"
+# =============================================================================
+# TENTATIVA DE CONEXÃO DE ESCRITA (GSheets API)
+# =============================================================================
+usar_escrita = False
+conn_gsheets = None
 
-@st.cache_data(ttl=5)
-def carregar_dados_csv(url):
+try:
+    from streamlit_gsheets import GSheetsConnection
+    # Tenta obter a conexão configurada nos Secrets
+    conn_gsheets = st.connection("gsheets", type=GSheetsConnection)
+    usar_escrita = True
+except Exception:
+    usar_escrita = False
+
+@st.cache_data(ttl=2)
+def carregar_dados():
+    # Se houver conexão de escrita ativa via Secrets
+    if usar_escrita and conn_gsheets is not None:
+        try:
+            df = conn_gsheets.read(worksheet=NOME_ABA_PLANILHA, ttl=0)
+            df = df.dropna(how='all')
+            return df, True
+        except Exception:
+            pass
+
+    # Fallback: Leitura via CSV Público
     try:
-        df_raw = pd.read_csv(url, header=None)
+        url_csv = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={GID_ORDENS_SERVICO}"
+        df_raw = pd.read_csv(url_csv, header=None)
         if df_raw.empty:
-            return pd.DataFrame()
+            return pd.DataFrame(), False
             
-        # Localiza dinamicamente a linha do cabeçalho
         linha_cabecalho = 0
         for idx, row in df_raw.iterrows():
             valores = [str(v).upper().strip() for v in row.values if pd.notna(v)]
@@ -34,11 +54,11 @@ def carregar_dados_csv(url):
         df = df.dropna(how='all')
         df = df.loc[:, ~df.columns.astype(str).str.contains('^Unnamed|^nan', case=False)]
         df = df.reset_index(drop=True)
-        return df
+        return df, False
     except Exception:
-        return pd.DataFrame()
+        return pd.DataFrame(), False
 
-df = carregar_dados_csv(URL_CSV)
+df, modo_escrita_ativo = carregar_dados()
 
 def converter_para_numero(valor):
     if pd.isna(valor):
@@ -62,6 +82,12 @@ menu = st.sidebar.radio(
         "✏️ Alterar OS / Pagamento"
     ]
 )
+
+# Status de Gravação na Sidebar
+if modo_escrita_ativo:
+    st.sidebar.success("🟢 Gravação Direta no Google Sheets: ATIVA")
+else:
+    st.sidebar.warning("🟡 Modo de Leitura (Sem permissão de gravação)")
 
 # =============================================================================
 # 1. DASHBOARD FINANCEIRO E FLUXO DE CAIXA MENSAL
@@ -185,12 +211,26 @@ elif menu == "➕ Cadastrar Nova OS":
             status = st.selectbox("Status Inicial", ["Aberto", "Em Andamento", "Aguardando Peça", "Concluído", "Entregue"])
             data_entrada = st.date_input("Data de Entrada", datetime.now()).strftime("%d/%m/%Y")
             
-        btn_salvar = st.form_submit_button("💾 Gerar Registro de OS")
+        btn_salvar = st.form_submit_button("💾 Salvar OS")
         
         if btn_salvar:
-            st.success(f"✅ Registro da OS {num_os} gerado com sucesso!")
-            st.write(f"**Cliente:** {cliente} | **Valor:** R$ {valor:.2f} | **Pagamento:** {forma_pagamento}")
-            st.info("📌 Insira a nova linha na sua planilha do Google Sheets para persisti-la permanentemente.")
+            nova_os = pd.DataFrame([{
+                "OS": num_os, "Cliente": cliente, "Telefone": telefone,
+                "Serviço": servico, "Valor Total": f"R$ {valor:.2f}",
+                "Forma Pagamento": forma_pagamento, "Status": status, "Data": data_entrada
+            }])
+            
+            if modo_escrita_ativo and conn_gsheets is not None:
+                try:
+                    df_atualizado = pd.concat([df, nova_os], ignore_index=True)
+                    conn_gsheets.update(worksheet=NOME_ABA_PLANILHA, data=df_atualizado)
+                    st.success(f"✅ OS {num_os} gravada diretamente no Google Sheets!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erro ao salvar no Google Sheets: {e}")
+            else:
+                st.warning("⚠️ O sistema está em modo de apenas leitura.")
+                st.info("Para salvar automaticamente no Google Sheets sem abrir o Drive, é necessário adicionar a chave [connections.gsheets] na caixa de Secrets no Streamlit Cloud.")
 
 # =============================================================================
 # 5. ALTERAR OS / PAGAMENTO
@@ -205,6 +245,8 @@ elif menu == "✏️ Alterar OS / Pagamento":
         os_para_editar = st.selectbox("Selecione a OS para alterar:", opcoes_os)
         
         if os_para_editar:
+            idx = df[df[coluna_os].astype(str) == os_para_editar].index[0]
+            
             with st.form("form_editar_os"):
                 col1, col2 = st.columns(2)
                 with col1:
@@ -212,14 +254,19 @@ elif menu == "✏️ Alterar OS / Pagamento":
                     nova_forma_pagto = st.selectbox("Alterar Forma de Pagamento", ["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro", "Boleto", "Pagamento Misto"])
                 with col2:
                     novo_valor = st.number_input("Atualizar Valor (R$)", min_value=0.0, step=5.0, format="%.2f")
-                    obs_pagto = st.text_area("Detalhamento de Valores Parciais (se houver)", placeholder="Ex: R$ 100 Pix + R$ 50 Dinheiro")
 
                 btn_atualizar = st.form_submit_button("🔄 Confirmar Atualização")
                 
                 if btn_atualizar:
-                    st.success(f"✅ Atualização registrada para a OS {os_para_editar}!")
-                    st.write(f"**Novo Status:** {novo_status} | **Forma de Pagamento:** {nova_forma_pagto}")
-                    if obs_pagto:
-                        st.write(f"**Observações:** {obs_pagto}")
-    else:
-        st.warning("Nenhuma OS disponível para alteração.")
+                    if modo_escrita_ativo and conn_gsheets is not None:
+                        try:
+                            df.loc[idx, "Status"] = novo_status
+                            df.loc[idx, "Forma Pagamento"] = nova_forma_pagto
+                            df.loc[idx, "Valor Total"] = f"R$ {novo_valor:.2f}"
+                            conn_gsheets.update(worksheet=NOME_ABA_PLANILHA, data=df)
+                            st.success(f"✅ OS {os_para_editar} atualizada no Google Sheets!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Erro ao atualizar no Google Sheets: {e}")
+                    else:
+                        st.warning("⚠️ O sistema está em modo de apenas leitura.")
