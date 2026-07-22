@@ -24,14 +24,37 @@ except Exception as e:
     modo_escrita_ativo = False
     mensagem_erro_escrita = str(e)
 
+# FUNÇÃO DE CONVERSÃO INTELIGENTE DE MOEDA (Corrige o erro de 500 -> 50.000)
+def converter_para_numero(valor):
+    if pd.isna(valor) or valor is None:
+        return 0.0
+    
+    val_str = str(valor).replace('R$', '').strip()
+    
+    if not val_str:
+        return 0.0
+        
+    # Se tem vírgula e ponto (ex: 1.500,00)
+    if ',' in val_str and '.' in val_str:
+        if val_str.rfind(',') > val_str.rfind('.'):
+            val_str = val_str.replace('.', '').replace(',', '.')
+        else:
+            val_str = val_str.replace(',', '')
+    elif ',' in val_str:
+        val_str = val_str.replace(',', '.')
+        
+    try:
+        return float(val_str)
+    except:
+        return 0.0
+
 @st.cache_data(ttl=1)
 def carregar_dados():
     global modo_escrita_ativo, mensagem_erro_escrita
     
-    # Tentativa 1: Leitura usando GSheetsConnection (Escrita habilitada)
+    # Tentativa 1: Leitura usando GSheetsConnection
     if modo_escrita_ativo and conn_gsheets is not None:
         try:
-            # Tenta ler a planilha principal
             df = conn_gsheets.read(ttl=0)
             df = df.dropna(how='all')
             return df, True, ""
@@ -64,17 +87,8 @@ def carregar_dados():
 
 df, modo_escrita_ativo, detalhe_erro = carregar_dados()
 
-def converter_para_numero(valor):
-    if pd.isna(valor):
-        return 0.0
-    val_str = str(valor).replace('R$', '').replace('.', '').replace(',', '.').strip()
-    try:
-        return float(val_str)
-    except:
-        return 0.0
-
 # =============================================================================
-# MENU LATERAL DE NAVEGAÇÃO E DIAGNÓSTICO DE CONEXÃO
+# MENU LATERAL DE NAVEGAÇÃO
 # =============================================================================
 menu = st.sidebar.radio(
     "📌 Navegação do Sistema",
@@ -218,9 +232,11 @@ elif menu == "➕ Cadastrar Nova OS":
         btn_salvar = st.form_submit_button("💾 Salvar no Google Sheets")
         
         if btn_salvar:
+            valor_formatado = f"{valor:.2f}".replace('.', ',')
+            
             nova_os = pd.DataFrame([{
                 "OS": num_os, "Cliente": cliente, "Telefone": telefone,
-                "Serviço": servico, "Valor Total": f"R$ {valor:.2f}",
+                "Serviço": servico, "Valor Total": f"R$ {valor_formatado}",
                 "Forma Pagamento": forma_pagamento, "Status": status, "Data": data_entrada
             }])
             
@@ -228,7 +244,7 @@ elif menu == "➕ Cadastrar Nova OS":
                 try:
                     df_atualizado = pd.concat([df, nova_os], ignore_index=True)
                     conn_gsheets.update(data=df_atualizado)
-                    st.success(f"✅ OS {num_os} salva diretamente no Google Sheets!")
+                    st.success(f"✅ OS {num_os} salva diretamente no Google Sheets com valor de R$ {valor_formatado}!")
                     st.cache_data.clear()
                     st.rerun()
                 except Exception as e:
@@ -245,11 +261,14 @@ elif menu == "✏️ Alterar OS / Pagamento":
     if not df.empty:
         colunas = list(df.columns)
         coluna_os = next((c for c in colunas if "OS" in c.upper() or "NUMERO" in c.upper() or "Nº" in c.upper()), colunas[0])
+        col_valor = next((c for c in df.columns if any(p in c.upper() for p in ["VALOR", "TOTAL", "PREÇO", "PRECO"])), None)
+        
         opcoes_os = df[coluna_os].dropna().astype(str).unique()
         os_para_editar = st.selectbox("Selecione a OS para alterar:", opcoes_os)
         
         if os_para_editar:
             idx = df[df[coluna_os].astype(str) == os_para_editar].index[0]
+            val_atual = converter_para_numero(df.loc[idx, col_valor]) if col_valor else 0.0
             
             with st.form("form_editar_os"):
                 col1, col2 = st.columns(2)
@@ -257,16 +276,19 @@ elif menu == "✏️ Alterar OS / Pagamento":
                     novo_status = st.selectbox("Alterar Status", ["Aberto", "Em Andamento", "Aguardando Peça", "Concluído", "Entregue", "Cancelado"])
                     nova_forma_pagto = st.selectbox("Alterar Forma de Pagamento", ["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro", "Boleto", "Pagamento Misto"])
                 with col2:
-                    novo_valor = st.number_input("Atualizar Valor (R$)", min_value=0.0, step=5.0, format="%.2f")
+                    novo_valor = st.number_input("Atualizar Valor (R$)", value=val_atual, min_value=0.0, step=5.0, format="%.2f")
 
                 btn_atualizar = st.form_submit_button("🔄 Atualizar no Google Sheets")
                 
                 if btn_atualizar:
                     if modo_escrita_ativo and conn_gsheets is not None:
                         try:
+                            valor_formatado = f"{novo_valor:.2f}".replace('.', ',')
                             df.loc[idx, "Status"] = novo_status
                             df.loc[idx, "Forma Pagamento"] = nova_forma_pagto
-                            df.loc[idx, "Valor Total"] = f"R$ {novo_valor:.2f}"
+                            if col_valor:
+                                df.loc[idx, col_valor] = f"R$ {valor_formatado}"
+                                
                             conn_gsheets.update(data=df)
                             st.success(f"✅ OS {os_para_editar} atualizada no Google Sheets!")
                             st.cache_data.clear()
