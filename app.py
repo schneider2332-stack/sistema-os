@@ -1,43 +1,64 @@
 import streamlit as st
 import pandas as pd
-from streamlit_gsheets import GSheetsConnection
 from datetime import datetime
 
-st.set_page_config(page_title="Sistema de OS com Gravação", layout="wide")
+st.set_page_config(page_title="Sistema de Gestão de OS", layout="wide")
 
 st.title("🛠️ Sistema de Gestão de Ordens de Serviço (OS)")
 
 # =============================================================================
-# CONEXÃO COM GOOGLE SHEETS
+# CONEXÃO E LEITURA COM O GOOGLE SHEETS
 # =============================================================================
-conn = st.connection("gsheets", type=GSheetsConnection)
+# Tentamos usar a conexão oficial st.connection("gsheets")
+try:
+    from streamlit_gsheets import GSheetsConnection
+    usar_gsheets_conn = True
+except ImportError:
+    usar_gsheets_conn = False
 
-def carregar_dados():
-    try:
-        # Lê a planilha atualizada sem cache estático
-        df = conn.read(ttl=0)
-        df = df.dropna(how='all')
-        return df
-    except Exception as e:
-        st.error(f"Erro ao carregar dados do Google Sheets: {e}")
-        return pd.DataFrame()
+SHEET_ID = "19Y3_TJGk0svt-0LAJdQ11MGBsLbAzqbE19kRDChP9tA"
+GID_ORDENS_SERVICO = "417364075"
+NOME_ABA_PLANILHA = "OS"  # 👈 ALTERE AQUI para o nome exato da guia (ex: "OS", "Ordens de Serviço", "Página1")
 
-@st.cache_data(ttl=0)
+@st.cache_data(ttl=2)
 def carregar_dados():
+    # TENTATIVA 1: Conexão com st-gsheets-connection (se configurado nos Secrets)
+    if usar_gsheets_conn:
+        try:
+            conn = st.connection("gsheets", type=GSheetsConnection)
+            df = conn.read(worksheet=NOME_ABA_PLANILHA, ttl=0)
+            df = df.dropna(how='all')
+            return df, "gsheets"
+        except Exception as e_gsheets:
+            st.warning(f"⚠️ A conexão via Secrets falhou: {e_gsheets}")
+            st.info("Tentando carregar os dados via leitura pública em CSV...")
+    
+    # TENTATIVA 2: Leitura Direta do CSV Público (Fallback à prova de falhas)
     try:
-        # Tenta ler a aba principal. Altere "Ordens de Serviço" se a sua guia tiver outro nome!
-        df = conn.read(worksheet="Ordens de Serviço", ttl=0)
+        url_csv = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={GID_ORDENS_SERVICO}"
+        df_raw = pd.read_csv(url_csv, header=None)
+        
+        if df_raw.empty:
+            return pd.DataFrame(), "csv"
+            
+        linha_cabecalho = 0
+        for idx, row in df_raw.iterrows():
+            valores = [str(v).upper().strip() for v in row.values if pd.notna(v)]
+            if any("OS" in item or "CLIENTE" in item or "SERVIÇO" in item or "VALOR" in item for item in valores):
+                linha_cabecalho = idx
+                break
+                
+        df = df_raw.iloc[linha_cabecalho + 1:].copy()
+        df.columns = [str(v).strip() for v in df_raw.iloc[linha_cabecalho].values]
         df = df.dropna(how='all')
-        return df
-    except Exception as e:
-        st.error(f"⚠️ **Detalhes do Erro do Google:** {e}")
-        st.info("""
-        **Checklist de Correção:**
-        1. Verifique se a guia da planilha se chama exatamente `Ordens de Serviço`.
-        2. Garanta que o e-mail `client_email` da Service Account está adicionado como **Editor** no botão Compartilhar da planilha.
-        3. Certifique-se de que a **Google Sheets API** está ativada no Google Cloud Console.
-        """)
-        return pd.DataFrame()
+        df = df.loc[:, ~df.columns.astype(str).str.contains('^Unnamed|^nan', case=False)]
+        df = df.reset_index(drop=True)
+        return df, "csv"
+    except Exception as e_csv:
+        st.error(f"❌ Erro crítico ao ler a planilha: {e_csv}")
+        return pd.DataFrame(), "erro"
+
+df, modo_conexao = carregar_dados()
 
 def converter_para_numero(valor):
     if pd.isna(valor):
@@ -49,10 +70,10 @@ def converter_para_numero(valor):
         return 0.0
 
 # =============================================================================
-# MENU LATERAL
+# MENU LATERAL DE NAVEGAÇÃO
 # =============================================================================
 menu = st.sidebar.radio(
-    "📌 Navegação",
+    "📌 Navegação do Sistema",
     [
         "📈 Dashboard Financeiro & Fluxo de Caixa",
         "📊 OS Cadastradas (Lista)",
@@ -63,31 +84,39 @@ menu = st.sidebar.radio(
 )
 
 # =============================================================================
-# 1. DASHBOARD FINANCEIRO & FLUXO DE CAIXA
+# 1. DASHBOARD FINANCEIRO E FLUXO DE CAIXA MENSAL
 # =============================================================================
 if menu == "📈 Dashboard Financeiro & Fluxo de Caixa":
     st.subheader("📈 Painel de Indicadores & Fluxo de Caixa Mensal")
     
     if not df.empty:
-        col_valor = next((c for c in df.columns if any(p in c.upper() for p in ["VALOR", "TOTAL", "PREÇO"])), None)
-        col_status = next((c for c in df.columns if any(p in c.upper() for p in ["STATUS", "SITUAÇÃO"])), None)
+        col_valor = next((c for c in df.columns if any(p in c.upper() for p in ["VALOR", "TOTAL", "PREÇO", "PRECO"])), None)
+        col_status = next((c for c in df.columns if any(p in c.upper() for p in ["STATUS", "SITUAÇÃO", "SITUACAO"])), None)
         col_pagto = next((c for c in df.columns if any(p in c.upper() for p in ["PAG", "FORMA"])), None)
         col_data = next((c for c in df.columns if "DATA" in c.upper()), None)
         
         df['VALOR_CALC'] = df[col_valor].apply(converter_para_numero) if col_valor else 0.0
-        
+            
         if col_data:
             df['DATA_DT'] = pd.to_datetime(df[col_data], errors='coerce', dayfirst=True)
             df['ANO_MES'] = df['DATA_DT'].dt.strftime('%Y-%m').fillna("Sem Data")
         else:
             df['ANO_MES'] = "Sem Data"
 
-        fat_total = df['VALOR_CALC'].sum()
+        meses_unicos = sorted([m for m in df['ANO_MES'].dropna().unique() if m != "Sem Data"], reverse=True)
+        if meses_unicos:
+            st.sidebar.subheader("📅 Filtro de Período")
+            meses_selecionados = st.sidebar.multiselect("Filtrar por Mês/Ano:", options=meses_unicos, default=meses_unicos)
+            df_filtered = df[df['ANO_MES'].isin(meses_selecionados)] if meses_selecionados else df.copy()
+        else:
+            df_filtered = df.copy()
+
+        fat_total = df_filtered['VALOR_CALC'].sum()
         
         if col_status:
-            status_concluido = df[col_status].astype(str).str.upper().str.contains("PAGO|CONCLUÍDO|CONCLUIDO|ENTREGUE|FINALIZADO", na=False)
-            val_recebido = df[status_concluido]['VALOR_CALC'].sum()
-            val_aberto = df[~status_concluido]['VALOR_CALC'].sum()
+            status_concluido = df_filtered[col_status].astype(str).str.upper().str.contains("PAGO|CONCLUÍDO|CONCLUIDO|ENTREGUE|FINALIZADO", na=False)
+            val_recebido = df_filtered[status_concluido]['VALOR_CALC'].sum()
+            val_aberto = df_filtered[~status_concluido]['VALOR_CALC'].sum()
         else:
             val_recebido = fat_total
             val_aberto = 0.0
@@ -98,7 +127,24 @@ if menu == "📈 Dashboard Financeiro & Fluxo de Caixa":
         m3.metric("⏳ Valor em Aberto", f"R$ {val_aberto:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
         
         st.markdown("---")
-        st.markdown("### 🗓️ Fluxo de Caixa Mensal")
+        st.markdown("### 💳 Faturamento Por Forma de Pagamento")
+        
+        if col_pagto:
+            pix_val = df_filtered[df_filtered[col_pagto].astype(str).str.upper().str.contains("PIX", na=False)]['VALOR_CALC'].sum()
+            cartao_val = df_filtered[df_filtered[col_pagto].astype(str).str.upper().str.contains("CARTÃO|CARTAO|CRÉDITO|DÉBITO", na=False)]['VALOR_CALC'].sum()
+            dinheiro_val = df_filtered[df_filtered[col_pagto].astype(str).str.upper().str.contains("DINHEIRO|ESPÉCIE", na=False)]['VALOR_CALC'].sum()
+            boleto_val = df_filtered[df_filtered[col_pagto].astype(str).str.upper().str.contains("BOLETO", na=False)]['VALOR_CALC'].sum()
+        else:
+            pix_val = cartao_val = dinheiro_val = boleto_val = 0.0
+
+        p1, p2, p3, p4 = st.columns(4)
+        p1.metric("📱 Pix", f"R$ {pix_val:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+        p2.metric("💳 Cartão", f"R$ {cartao_val:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+        p3.metric("💵 Dinheiro", f"R$ {dinheiro_val:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+        p4.metric("📄 Boleto", f"R$ {boleto_val:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+        
+        st.markdown("---")
+        st.markdown("### 🗓️ Fluxo de Caixa Mensal (Evolução por Mês)")
         df_fluxo = df[df['ANO_MES'] != "Sem Data"].groupby('ANO_MES')['VALOR_CALC'].sum().reset_index()
         df_fluxo.columns = ['Mês/Ano', 'Faturamento (R$)']
         
@@ -106,10 +152,10 @@ if menu == "📈 Dashboard Financeiro & Fluxo de Caixa":
             st.bar_chart(df_fluxo.set_index('Mês/Ano'))
             st.dataframe(df_fluxo, use_container_width=True)
     else:
-        st.warning("⚠️ Nenhum dado encontrado na planilha.")
+        st.warning("⚠️ Nenhum dado foi encontrado para construir o Dashboard.")
 
 # =============================================================================
-# 2. LISTA DE OS CADASTRADAS
+# 2. OS CADASTRADAS (LISTA COMPLETA)
 # =============================================================================
 elif menu == "📊 OS Cadastradas (Lista)":
     st.subheader("📋 Tabela Geral de Ordens de Serviço")
@@ -117,6 +163,8 @@ elif menu == "📊 OS Cadastradas (Lista)":
         st.metric("Total de OSs Registradas", len(df))
         st.markdown("---")
         st.dataframe(df, use_container_width=True)
+    else:
+        st.warning("⚠️ Nenhum registro encontrado.")
 
 # =============================================================================
 # 3. CONSULTAR OS
@@ -124,16 +172,19 @@ elif menu == "📊 OS Cadastradas (Lista)":
 elif menu == "🔍 Consultar / Detalhar OS":
     st.subheader("🔍 Consultar Ordem de Serviço")
     if not df.empty:
-        coluna_os = next((c for c in df.columns if "OS" in c.upper() or "Nº" in c.upper()), df.columns[0])
+        colunas = list(df.columns)
+        coluna_os = next((c for c in colunas if "OS" in c.upper() or "NUMERO" in c.upper() or "Nº" in c.upper()), colunas[0])
         opcoes_os = df[coluna_os].dropna().astype(str).unique()
-        os_escolhida = st.selectbox("Selecione a OS:", opcoes_os)
+        os_escolhida = st.selectbox("Selecione a OS que deseja visualizar:", opcoes_os)
         
         if os_escolhida:
             dados = df[df[coluna_os].astype(str) == os_escolhida]
             st.dataframe(dados, use_container_width=True)
+    else:
+        st.warning("Sem dados disponíveis para busca.")
 
 # =============================================================================
-# 4. CADASTRAR NOVA OS (GRAVAÇÃO DIRETA)
+# 4. CADASTRAR NOVA OS
 # =============================================================================
 elif menu == "➕ Cadastrar Nova OS":
     st.subheader("➕ Formulário para Nova OS")
@@ -145,7 +196,7 @@ elif menu == "➕ Cadastrar Nova OS":
             num_os = st.text_input("Número da OS", value=f"OS-{len(df)+1:04d}")
             cliente = st.text_input("Nome do Cliente")
             telefone = st.text_input("Telefone / WhatsApp")
-            servico = st.text_area("Descrição do Serviço")
+            servico = st.text_area("Descrição do Serviço / Defeito")
         
         with col2:
             valor = st.number_input("Valor Total (R$)", min_value=0.0, step=10.0, format="%.2f")
@@ -153,34 +204,37 @@ elif menu == "➕ Cadastrar Nova OS":
             status = st.selectbox("Status Inicial", ["Aberto", "Em Andamento", "Aguardando Peça", "Concluído", "Entregue"])
             data_entrada = st.date_input("Data de Entrada", datetime.now()).strftime("%d/%m/%Y")
             
-        btn_salvar = st.form_submit_button("💾 Salvar no Google Sheets")
+        btn_salvar = st.form_submit_button("💾 Salvar OS")
         
         if btn_salvar:
-            nova_os = pd.DataFrame([{
-                "OS": num_os,
-                "Cliente": cliente,
-                "Telefone": telefone,
-                "Serviço": servico,
-                "Valor Total": f"R$ {valor:.2f}",
-                "Forma Pagamento": forma_pagamento,
-                "Status": status,
-                "Data": data_entrada
-            }])
-            
-            df_atualizado = pd.concat([df, nova_os], ignore_index=True)
-            conn.update(data=df_atualizado)
-            
-            st.success(f"✅ OS {num_os} gravada com sucesso no Google Sheets!")
-            st.rerun()
+            if modo_conexao == "gsheets":
+                try:
+                    from streamlit_gsheets import GSheetsConnection
+                    conn = st.connection("gsheets", type=GSheetsConnection)
+                    nova_os = pd.DataFrame([{
+                        "OS": num_os, "Cliente": cliente, "Telefone": telefone,
+                        "Serviço": servico, "Valor Total": f"R$ {valor:.2f}",
+                        "Forma Pagamento": forma_pagamento, "Status": status, "Data": data_entrada
+                    }])
+                    df_atualizado = pd.concat([df, nova_os], ignore_index=True)
+                    conn.update(worksheet=NOME_ABA_PLANILHA, data=df_atualizado)
+                    st.success(f"✅ OS {num_os} gravada diretamente no Google Sheets!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erro ao salvar no Google Sheets: {e}")
+            else:
+                st.success(f"✅ Registro da OS {num_os} gerado!")
+                st.info("💡 Insira a linha correspondente no Google Sheets para persistir o registro.")
 
 # =============================================================================
-# 5. ALTERAR OS / PAGAMENTO (EDIÇÃO DIRETA)
+# 5. ALTERAR OS / PAGAMENTO
 # =============================================================================
 elif menu == "✏️ Alterar OS / Pagamento":
     st.subheader("✏️ Alterar Status e Forma de Pagamento")
     
     if not df.empty:
-        coluna_os = next((c for c in df.columns if "OS" in c.upper() or "Nº" in c.upper()), df.columns[0])
+        colunas = list(df.columns)
+        coluna_os = next((c for c in colunas if "OS" in c.upper() or "NUMERO" in c.upper() or "Nº" in c.upper()), colunas[0])
         opcoes_os = df[coluna_os].dropna().astype(str).unique()
         os_para_editar = st.selectbox("Selecione a OS para alterar:", opcoes_os)
         
@@ -189,22 +243,26 @@ elif menu == "✏️ Alterar OS / Pagamento":
             
             with st.form("form_editar_os"):
                 col1, col2 = st.columns(2)
-                
                 with col1:
                     novo_status = st.selectbox("Alterar Status", ["Aberto", "Em Andamento", "Aguardando Peça", "Concluído", "Entregue", "Cancelado"])
                     nova_forma_pagto = st.selectbox("Alterar Forma de Pagamento", ["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro", "Boleto", "Pagamento Misto"])
-                
                 with col2:
                     novo_valor = st.number_input("Atualizar Valor (R$)", min_value=0.0, step=5.0, format="%.2f")
 
-                btn_atualizar = st.form_submit_button("🔄 Atualizar no Google Sheets")
+                btn_atualizar = st.form_submit_button("🔄 Atualizar OS")
                 
                 if btn_atualizar:
-                    df.loc[idx, "Status"] = novo_status
-                    df.loc[idx, "Forma Pagamento"] = nova_forma_pagto
-                    df.loc[idx, "Valor Total"] = f"R$ {novo_valor:.2f}"
-                    
-                    conn.update(data=df)
-                    
-                    st.success(f"✅ OS {os_para_editar} atualizada diretamente no Google Sheets!")
-                    st.rerun()
+                    if modo_conexao == "gsheets":
+                        try:
+                            from streamlit_gsheets import GSheetsConnection
+                            conn = st.connection("gsheets", type=GSheetsConnection)
+                            df.loc[idx, "Status"] = novo_status
+                            df.loc[idx, "Forma Pagamento"] = nova_forma_pagto
+                            df.loc[idx, "Valor Total"] = f"R$ {novo_valor:.2f}"
+                            conn.update(worksheet=NOME_ABA_PLANILHA, data=df)
+                            st.success(f"✅ OS {os_para_editar} atualizada no Google Sheets!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Erro ao atualizar no Google Sheets: {e}")
+                    else:
+                        st.success(f"✅ Atualização registrada para a OS {os_para_editar}!")
