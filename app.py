@@ -5,8 +5,8 @@ st.set_page_config(page_title="Sistema de OS & Dashboard", layout="wide")
 
 st.title("🛠️ Sistema de Gestão e Dashboard de OS")
 
-# Link formatado para EXPORTAÇÃO CSV direta (necessário para o pandas)
-URL_PLANILHA = "https://docs.google.com/spreadsheets/d/19Y3_TJGk0svt-0LAJdQ11MGBsLbAzqbE19kRDChP9tA/edit?usp=sharing&gid=417364075"
+# Link formatado para EXPORTAÇÃO CSV direta do Google Sheets (com o gid correto da aba)
+URL_PLANILHA = "https://docs.google.com/spreadsheets/d/19Y3_TJGk0svt-0LAJdQ11MGBsLbAzqbE19kRDChP9tA/export?format=csv&gid=417364075"
 
 @st.cache_data(ttl=5)
 def carregar_dados():
@@ -14,7 +14,7 @@ def carregar_dados():
         # 1. Lê a planilha bruta sem assumir cabeçalho fixo
         df_bruto = pd.read_csv(URL_PLANILHA, header=None)
         
-        # 2. Localiza em qual linha estão os nomes reais das colunas (procura por "OS" ou "CLIENTE")
+        # 2. Localiza em qual linha estão os nomes reais das colunas
         linha_cabecalho = None
         for idx, row in df_bruto.iterrows():
             valores_linha = [str(val).strip().upper() for val in row.values if pd.notna(val)]
@@ -47,8 +47,8 @@ if df.empty:
     st.warning("⚠️ Nenhum dado foi encontrado ou a aba selecionada está vazia.")
     st.info("""
     **💡 Como verificar:**
-    1. Certifique-se de que a planilha no Google Drive está compartilhada como **"Qualquer pessoa com o link"**.
-    2. Confira se a aba com os dados é a primeira aba da planilha (`gid=0`).
+    1. Certifique-se de que a planilha no Google Drive está compartilhada como **"Qualquer pessoa com o link"** (Acesso de Leitor).
+    2. Verifique se o ID da aba está correto.
     """)
 else:
     # Menu Lateral
