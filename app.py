@@ -3,28 +3,27 @@ import pandas as pd
 from streamlit_gsheets import GSheetsConnection
 from datetime import datetime
 
-st.set_page_config(page_title="Sistema de OS com Gravacao Direta", layout="wide")
+st.set_page_config(page_title="Sistema de OS com Gravação", layout="wide")
 
 st.title("🛠️ Sistema de Gestão de Ordens de Serviço (OS)")
 
 # =============================================================================
-# CONEXÃO DE LEITURA E ESCRITA COM GOOGLE SHEETS
+# CONEXÃO COM GOOGLE SHEETS
 # =============================================================================
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def carregar_dados():
     try:
-        # Lê a aba de OS em tempo real
-        df = conn.read(worksheet="OS", ttl=0)
+        # Lê a planilha atualizada sem cache estático
+        df = conn.read(ttl=0)
         df = df.dropna(how='all')
         return df
     except Exception as e:
-        st.error(f"Erro ao conectar com a planilha: {e}")
+        st.error(f"Erro ao carregar dados do Google Sheets: {e}")
         return pd.DataFrame()
 
 df = carregar_dados()
 
-# Função auxiliar para conversão de números
 def converter_para_numero(valor):
     if pd.isna(valor):
         return 0.0
@@ -35,10 +34,10 @@ def converter_para_numero(valor):
         return 0.0
 
 # =============================================================================
-# MENU LATERAL DE NAVEGAÇÃO
+# MENU LATERAL
 # =============================================================================
 menu = st.sidebar.radio(
-    "📌 Navegação do Sistema",
+    "📌 Navegação",
     [
         "📈 Dashboard Financeiro & Fluxo de Caixa",
         "📊 OS Cadastradas (Lista)",
@@ -49,7 +48,7 @@ menu = st.sidebar.radio(
 )
 
 # =============================================================================
-# 1. DASHBOARD FINANCEIRO E FLUXO DE CAIXA MENSAL
+# 1. DASHBOARD FINANCEIRO & FLUXO DE CAIXA
 # =============================================================================
 if menu == "📈 Dashboard Financeiro & Fluxo de Caixa":
     st.subheader("📈 Painel de Indicadores & Fluxo de Caixa Mensal")
@@ -78,15 +77,12 @@ if menu == "📈 Dashboard Financeiro & Fluxo de Caixa":
             val_recebido = fat_total
             val_aberto = 0.0
 
-        # CARDS MÉTRICOS
         m1, m2, m3 = st.columns(3)
         m1.metric("💵 Faturamento Total", f"R$ {fat_total:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
         m2.metric("✅ Valor Recebido", f"R$ {val_recebido:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
         m3.metric("⏳ Valor em Aberto", f"R$ {val_aberto:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
         
         st.markdown("---")
-        
-        # FLUXO DE CAIXA MENSAL
         st.markdown("### 🗓️ Fluxo de Caixa Mensal")
         df_fluxo = df[df['ANO_MES'] != "Sem Data"].groupby('ANO_MES')['VALOR_CALC'].sum().reset_index()
         df_fluxo.columns = ['Mês/Ano', 'Faturamento (R$)']
@@ -94,12 +90,11 @@ if menu == "📈 Dashboard Financeiro & Fluxo de Caixa":
         if not df_fluxo.empty:
             st.bar_chart(df_fluxo.set_index('Mês/Ano'))
             st.dataframe(df_fluxo, use_container_width=True)
-            
     else:
         st.warning("⚠️ Nenhum dado encontrado na planilha.")
 
 # =============================================================================
-# 2. OS CADASTRADAS (LISTA COMPLETA)
+# 2. LISTA DE OS CADASTRADAS
 # =============================================================================
 elif menu == "📊 OS Cadastradas (Lista)":
     st.subheader("📋 Tabela Geral de Ordens de Serviço")
@@ -123,7 +118,7 @@ elif menu == "🔍 Consultar / Detalhar OS":
             st.dataframe(dados, use_container_width=True)
 
 # =============================================================================
-# 4. CADASTRAR NOVA OS (GRAVAÇÃO DIRETA NO GOOGLE SHEETS)
+# 4. CADASTRAR NOVA OS (GRAVAÇÃO DIRETA)
 # =============================================================================
 elif menu == "➕ Cadastrar Nova OS":
     st.subheader("➕ Formulário para Nova OS")
@@ -143,7 +138,7 @@ elif menu == "➕ Cadastrar Nova OS":
             status = st.selectbox("Status Inicial", ["Aberto", "Em Andamento", "Aguardando Peça", "Concluído", "Entregue"])
             data_entrada = st.date_input("Data de Entrada", datetime.now()).strftime("%d/%m/%Y")
             
-        btn_salvar = st.form_submit_button("💾 Salvar Diretamente no Google Sheets")
+        btn_salvar = st.form_submit_button("💾 Salvar no Google Sheets")
         
         if btn_salvar:
             nova_os = pd.DataFrame([{
@@ -157,15 +152,14 @@ elif menu == "➕ Cadastrar Nova OS":
                 "Data": data_entrada
             }])
             
-            # Adiciona a nova linha e atualiza a planilha
             df_atualizado = pd.concat([df, nova_os], ignore_index=True)
-            conn.update(worksheet="OS", data=df_atualizado)
+            conn.update(data=df_atualizado)
             
             st.success(f"✅ OS {num_os} gravada com sucesso no Google Sheets!")
             st.rerun()
 
 # =============================================================================
-# 5. ALTERAR OS / FORMA DE PAGAMENTO (EDIÇÃO NO GOOGLE SHEETS)
+# 5. ALTERAR OS / PAGAMENTO (EDIÇÃO DIRETA)
 # =============================================================================
 elif menu == "✏️ Alterar OS / Pagamento":
     st.subheader("✏️ Alterar Status e Forma de Pagamento")
@@ -188,16 +182,14 @@ elif menu == "✏️ Alterar OS / Pagamento":
                 with col2:
                     novo_valor = st.number_input("Atualizar Valor (R$)", min_value=0.0, step=5.0, format="%.2f")
 
-                btn_atualizar = st.form_submit_button("🔄 Atualizar e Salvar no Google Sheets")
+                btn_atualizar = st.form_submit_button("🔄 Atualizar no Google Sheets")
                 
                 if btn_atualizar:
-                    # Atualiza os valores na linha específica do DataFrame
                     df.loc[idx, "Status"] = novo_status
                     df.loc[idx, "Forma Pagamento"] = nova_forma_pagto
                     df.loc[idx, "Valor Total"] = f"R$ {novo_valor:.2f}"
                     
-                    # Salva as alterações de volta no Google Sheets
-                    conn.update(worksheet="OS", data=df)
+                    conn.update(data=df)
                     
                     st.success(f"✅ OS {os_para_editar} atualizada diretamente no Google Sheets!")
                     st.rerun()
