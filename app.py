@@ -6,17 +6,22 @@ st.set_page_config(page_title="Sistema de OS & Dashboard (Online)", layout="wide
 
 st.title("🛠️ Sistema de Gestão e Dashboard de OS (Nuvem)")
 
-# ID da sua planilha extraído do seu link
-SPREADSHEET_ID = "14x8Q_74Y5N12_1S5r0jXqQ5b7v8m9L0K1J2I3H4G5F"
-
-# URL de leitura rápida e direta do Google Sheets (formato CSV)
-GSHEETS_URL = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet=Ordens%20de%20Servi%C3%A7o"
-
+# URL de leitura direta do Google Sheets no formato CSV
+# (Substitui os cabeçalhos de visualização e traz os dados limpos)
 @st.cache_data(ttl=5)
 def carregar_dados():
     try:
-        # Lê os dados do Google Sheets ignorando as 3 primeiras linhas do cabeçalho
-        df = pd.read_csv(GSHEETS_URL, skiprows=3)
+        # Puxa o link configurado nos Secrets do Streamlit
+        url_planilha = st.secrets["gsheets"]["spreadsheet"]
+        
+        # Converte o link de visualização da planilha para o formato de exportação de dados (CSV)
+        if "/edit" in url_planilha:
+            url_csv = url_planilha.split("/edit")[0] + "/gviz/tq?tqx=out:csv&sheet=Ordens%20de%20Servi%C3%A7o"
+        else:
+            url_csv = url_planilha
+
+        # Lê os dados pulando os cabeçalhos das 3 primeiras linhas
+        df = pd.read_csv(url_csv, skiprows=3)
         df = df.loc[:, ~df.columns.astype(str).str.contains('^Unnamed')]
         
         colunas_texto = ['Situação', 'Cliente', 'Descrição do Serviço', 'Observações', 'Telefone', 'Cidade']
@@ -26,7 +31,7 @@ def carregar_dados():
         return df
     except Exception as e:
         st.error(f"Erro ao carregar os dados do Google Sheets: {e}")
-        st.info("💡 Verifique se a sua planilha no Google Drive está com o compartilhamento como 'Qualquer pessoa com o link'.")
+        st.info("💡 Verifique se o link foi colado corretamente nos Secrets e se a planilha no Google Drive está compartilhada como 'Qualquer pessoa com o link'.")
         return pd.DataFrame()
 
 df = carregar_dados()
@@ -128,7 +133,7 @@ if not df.empty:
     # =========================================================================
     elif aba == "➕ Cadastrar Nova OS":
         st.subheader("➕ Inserir Nova Ordem de Serviço")
-        st.info("Para cadastrar ou editar registros diretamente no Google Sheets, acesse a sua planilha compartilhada no Google Drive.")
+        st.info("💡 Como a planilha está compartilhada como Editor, você e seus funcionários podem inserir ou editar as OS diretamente na planilha no Google Drive. Os dados atualizarão no site em tempo real!")
 
     # =========================================================================
     # ABA 4: VISÃO GERAL / LISTA COMPLETA
