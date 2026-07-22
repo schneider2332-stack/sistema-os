@@ -6,7 +6,7 @@ st.set_page_config(page_title="Sistema de OS & Dashboard", layout="wide")
 st.title("🛠️ Sistema de Gestão e Dashboard de OS")
 
 # Link formatado para EXPORTAÇÃO CSV direta (necessário para o pandas)
-URL_PLANILHA = "https://docs.google.com/spreadsheets/d/1rq9r6Y4MHAf8QxEzxdCz9ty5mNOM5Q7Vc-KIl4VgH5Y/gviz/tq?tqx=out:csv&gid=0"
+URL_PLANILHA = "https://docs.google.com/spreadsheets/d/19Y3_TJGk0svt-0LAJdQ11MGBsLbAzqbE19kRDChP9tA/edit?usp=sharing&gid=417364075"
 
 @st.cache_data(ttl=5)
 def carregar_dados():
