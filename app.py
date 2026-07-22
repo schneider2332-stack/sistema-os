@@ -6,45 +6,46 @@ st.set_page_config(page_title="Sistema de OS & Dashboard", layout="wide")
 
 st.title("🛠️ Sistema de Gestão e Dashboard de OS")
 
-# ⚠️ COLE AQUI A URL COMPLETA DA SUA PLANILHA COPIADA DO NAVEGADOR (mantendo as aspas)
-URL_EDITABLE_PLANILHA = "https://docs.google.com/spreadsheets/d/1rq9r6Y4MHAf8QxEzxdCz9ty5mNOM5Q7Vc-KIl4VgH5Y/edit?usp=sharing"
-
-# Função para converter a URL normal em link de download CSV automático
-def obter_url_csv(url):
-    try:
-        if "/edit" in url:
-            base_url = url.split("/edit")[0]
-            # Se houver gid (aba específica), extrai
-            if "gid=" in url:
-                gid = url.split("gid=")[1].split("&")[0]
-                return f"{base_url}/export?format=csv&gid={gid}"
-            return f"{base_url}/export?format=csv"
-        return url
-    except:
-        return url
+# Link público da sua planilha no Google Sheets
+URL_PLANILHA = "https://docs.google.com/spreadsheets/d/14x8Q_74Y5N12_1S5r0jXqQ5b7v8m9L0K1J2I3H4G5F/gviz/tq?tqx=out:csv"
 
 @st.cache_data(ttl=2)
 def carregar_dados():
     try:
-        url_csv = obter_url_csv(URL_EDITABLE_PLANILHA)
+        # Tenta ler o CSV gerado automaticamente pelo Google Sheets
+        df = pd.read_csv(URL_PLANILHA)
         
-        # Lê os dados ignorando as 3 primeiras linhas de cabeçalho
-        df = pd.read_csv(url_csv, skiprows=3)
+        # Limpa colunas sem nome ou vazias
         df = df.loc[:, ~df.columns.astype(str).str.contains('^Unnamed')]
         
+        # Se a planilha tiver mais de 3 linhas de cabeçalho informativo, removemos linhas nulas no topo
+        if 'Número da OS' not in df.columns:
+            # Tenta redefinir o cabeçalho procurando a linha correta
+            for idx, row in df.iterrows():
+                if 'Número da OS' in row.values or 'Cliente' in row.values:
+                    df.columns = row.values
+                    df = df.iloc[idx + 1:].reset_index(drop=True)
+                    break
+
         colunas_texto = ['Situação', 'Cliente', 'Descrição do Serviço', 'Observações', 'Telefone', 'Cidade']
         for col in colunas_texto:
             if col in df.columns:
                 df[col] = df[col].astype(str).replace('nan', '')
+                
         return df
     except Exception as e:
-        st.error(f"Não foi possível ler a planilha no Google Sheets: {e}")
-        st.info("💡 Certifique-se de que a sua planilha no Google Drive está com o acesso liberado para 'Qualquer pessoa com o link'.")
+        st.error(f"Erro ao tentar ler os dados da planilha: {e}")
         return pd.DataFrame()
 
+# Carregar os dados
 df = carregar_dados()
 
-if not df.empty:
+# DIAGNÓSTICO: Se o DataFrame vier vazio, mostra um aviso na tela em vez de deixar em branco
+if df.empty:
+    st.warning("⚠️ Nenhum dado foi encontrado ou a planilha retornou vazia.")
+    st.info("Por favor, verifique se a sua planilha no Google Drive contém dados cadastrados e se o acesso de compartilhamento está como 'Qualquer pessoa com o link'.")
+else:
+    # Menu Lateral
     aba = st.sidebar.radio(
         "Navegação do Sistema", 
         ["📈 Dashboard Executivo", "🔍 Consultar OS", "➕ Cadastrar Nova OS", "📊 Visão Geral / Lista"]
@@ -58,9 +59,9 @@ if not df.empty:
         st.caption("Acompanhamento em tempo real dos indicadores da empresa")
 
         total_os = len(df)
-        total_faturado = pd.to_numeric(df['Valor Total'], errors='coerce').sum()
-        total_recebido = pd.to_numeric(df['Valor Pago'], errors='coerce').sum()
-        total_em_aberto = pd.to_numeric(df['Valor Pendente'], errors='coerce').sum()
+        total_faturado = pd.to_numeric(df.get('Valor Total', 0), errors='coerce').sum()
+        total_recebido = pd.to_numeric(df.get('Valor Pago', 0), errors='coerce').sum()
+        total_em_aberto = pd.to_numeric(df.get('Valor Pendente', 0), errors='coerce').sum()
         total_clientes = df['Cliente'].replace('', pd.NA).dropna().nunique() if 'Cliente' in df.columns else 0
 
         st.markdown("##### 💵 Resumo Financeiro Geral")
@@ -141,7 +142,7 @@ if not df.empty:
     # =========================================================================
     elif aba == "➕ Cadastrar Nova OS":
         st.subheader("➕ Inserir Nova Ordem de Serviço")
-        st.info("💡 Como a planilha está compartilhada no Google Drive, insira os novos registros na planilha online. O site atualizará os indicadores em tempo real!")
+        st.info("💡 Insira os novos registros ou alterações diretamente na planilha compartilhada no Google Drive. Os dados atualizarão este site em tempo real!")
 
     # =========================================================================
     # ABA 4: VISÃO GERAL / LISTA COMPLETA
