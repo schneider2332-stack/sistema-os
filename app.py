@@ -160,7 +160,6 @@ elif menu == "➕ Cadastrar Nova OS":
     st.subheader("➕ Formulário para Cadastrar Nova OS")
     st.caption("Ao clicar em 'Salvar Ordem de Serviço', todos os campos serão limpos automaticamente para a próxima digitação.")
 
-    # clear_on_submit=True LIMPA TODO O FORMULÁRIO NATIVAMENTE
     with st.form("form_nova_os_limpo", clear_on_submit=True):
         col1, col2 = st.columns(2)
         
@@ -212,22 +211,22 @@ elif menu == "➕ Cadastrar Nova OS":
                 st.error(f"Erro ao salvar diretamente no Google Sheets: {e}")
 
 # =============================================================================
-# 5. ALTERAR OS / PAGAMENTO
+# 5. ALTERAR OU EXCLUIR OS / PAGAMENTO
 # =============================================================================
 elif menu == "✏️ Alterar OS / Pagamento":
-    st.subheader("✏️ Alterar Status e Forma de Pagamento de OS")
+    st.subheader("✏️ Alterar ou Excluir Ordem de Serviço")
     
     if not df_os.empty:
         col_os = next((c for c in df_os.columns if "OS" in str(c).upper() or "NUMERO" in str(c).upper() or "Nº" in str(c).upper()), df_os.columns[0])
         lista_os = df_os[col_os].dropna().astype(str).unique()
         
-        os_para_editar = st.selectbox("Selecione a OS para alterar:", ["-- Selecione a OS --"] + list(lista_os))
+        os_para_editar = st.selectbox("Selecione a OS para alterar ou excluir:", ["-- Selecione a OS --"] + list(lista_os))
         
         if os_para_editar != "-- Selecione a OS --":
             dados_os = df_os[df_os[col_os].astype(str) == os_para_editar].iloc[0]
             
-            with st.form("form_editar_os_limpo", clear_on_submit=True):
-                st.markdown(f"**Alterando dados da OS:** `{os_para_editar}`")
+            with st.form("form_editar_os"):
+                st.markdown(f"**Editando Ordem de Serviço:** `{os_para_editar}`")
                 
                 col1, col2 = st.columns(2)
                 with col1:
@@ -235,7 +234,9 @@ elif menu == "✏️ Alterar OS / Pagamento":
                     nova_forma = st.selectbox("Nova Forma de Pagamento", ["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro", "Boleto", "Pagamento Misto"])
                 
                 with col2:
-                    novo_valor = st.text_input("Atualizar Valor Total (R$)", value=str(dados_os.get('Valor Total', '0,00')))
+                    col_val_nome = next((c for c in df_os.columns if "VALOR" in str(c).upper() or "TOTAL" in str(c).upper()), None)
+                    val_atual = str(dados_os[col_val_nome]) if col_val_nome else "0,00"
+                    novo_valor = st.text_input("Atualizar Valor Total (R$)", value=val_atual)
                 
                 btn_salvar_alt = st.form_submit_button("💾 Salvar Alterações na OS")
                 
@@ -258,3 +259,25 @@ elif menu == "✏️ Alterar OS / Pagamento":
                         st.rerun()
                     except Exception as e:
                         st.error(f"Erro ao alterar OS no Google Sheets: {e}")
+
+            # -----------------------------------------------------------------
+            # ZONA DE PERIGO: EXCLUSÃO DE OS (FORA DO FORMULÁRIO DE EDIÇÃO)
+            # -----------------------------------------------------------------
+            st.markdown("---")
+            st.warning("⚠️ **Zona de Perigo: Exclusão de Registro**")
+            
+            confirmar_exclusao = st.checkbox(f"Confirmo que desejo apagar permanentemente a **{os_para_editar}**")
+            
+            if st.button("🗑️ Excluir esta OS", type="primary", disabled=not confirmar_exclusao):
+                try:
+                    conn = st.connection("gsheets", type=GSheetsConnection)
+                    
+                    # Filtra mantendo apenas as OSs diferentes da selecionada
+                    df_filtrado = df_os[df_os[col_os].astype(str) != os_para_editar]
+                    
+                    conn.update(data=df_filtrado)
+                    st.cache_data.clear()
+                    st.success(f"🗑️ Ordem de Serviço **{os_para_editar}** excluída com sucesso!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erro ao excluir OS no Google Sheets: {e}")
