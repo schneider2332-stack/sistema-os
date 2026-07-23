@@ -6,19 +6,19 @@ from streamlit_gsheets import GSheetsConnection
 # 1. Configuração Inicial do Painel
 st.set_page_config(page_title="Sistema de OS & Gestão Financeira", layout="wide")
 
-# 2. Conexão com Google Sheets
-@st.cache_data(ttl=2)
+# 2. Conexão com Google Sheets (com Bypass de Cache via ttl=0 para leitura em tempo real)
+@st.cache_data(ttl=0)
 def carregar_dados():
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
-        df = conn.read(ttl=2)
+        df = conn.read(ttl=0)
         if df is not None and not df.empty:
             df = df.dropna(how='all')
             df = df.loc[:, ~df.columns.astype(str).str.contains('^Unnamed|^nan', case=False)]
             return df
         return pd.DataFrame()
     except Exception as e:
-        # Fallback de leitura CSV público caso haja oscilação nas credenciais
+        # Fallback de leitura CSV público caso ocorra oscilação nas credenciais
         try:
             url_csv = "https://docs.google.com/spreadsheets/d/19Y3_TJGk0svt-0LAJdQ11MGBsLbAzqbE19kRDChP9tA/export?format=csv&gid=417364075"
             df_csv = pd.read_csv(url_csv)
@@ -27,7 +27,7 @@ def carregar_dados():
         except:
             return pd.DataFrame()
 
-# Função segura para conversão monetária (Ex: R$ 500,00 -> 500.0)
+# Função para conversão monetária segura (Ex: R$ 500,00 -> 500.0)
 def converter_para_numero(valor):
     if pd.isna(valor) or str(valor).strip() == "":
         return 0.0
@@ -57,7 +57,7 @@ menu = st.sidebar.radio(
 )
 
 # =============================================================================
-# 1. DASHBOARD FINANCEIRO & FLUXO DE CAIXA MENSAL (TABELA)
+# 1. DASHBOARD FINANCEIRO & FLUXO DE CAIXA MENSAL
 # =============================================================================
 if menu == "📈 Dashboard Financeiro":
     st.subheader("📈 Dashboard Executivo & Fluxo de Caixa")
@@ -112,20 +112,26 @@ if menu == "📈 Dashboard Financeiro":
 
         if col_data:
             df_calc['DATA_DT'] = pd.to_datetime(df_calc[col_data], errors='coerce', dayfirst=True)
-            df_calc['MES_ANO'] = df_calc['DATA_DT'].dt.strftime('%m/%Y')
+            df_fluxo_dados = df_calc.dropna(subset=['DATA_DT']).copy()
             
-            df_fluxo = df_calc.groupby('MES_ANO').agg(
-                Qtd_OS=('VALOR_NUM', 'count'),
-                Faturamento=('VALOR_NUM', 'sum')
-            ).reset_index()
+            if not df_fluxo_dados.empty:
+                df_fluxo_dados['MES_ANO'] = df_fluxo_dados['DATA_DT'].dt.strftime('%m/%Y')
+                
+                df_fluxo = df_fluxo_dados.groupby('MES_ANO').agg(
+                    Qtd_OS=('VALOR_NUM', 'count'),
+                    Faturamento=('VALOR_NUM', 'sum')
+                ).reset_index()
 
-            df_fluxo['Faturamento (R$)'] = df_fluxo['Faturamento'].apply(lambda x: f"R$ {x:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
-            df_fluxo = df_fluxo.rename(columns={'MES_ANO': 'Mês / Ano', 'Qtd_OS': 'Qtd. OS Lançadas'})
-            
-            st.dataframe(df_fluxo[['Mês / Ano', 'Qtd. OS Lançadas', 'Faturamento (R$)']], use_container_width=True)
+                df_fluxo['Faturamento (R$)'] = df_fluxo['Faturamento'].apply(
+                    lambda x: f"R$ {x:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+                )
+                df_fluxo = df_fluxo.rename(columns={'MES_ANO': 'Mês / Ano', 'Qtd_OS': 'Qtd. OS Lançadas'})
+                
+                st.dataframe(df_fluxo[['Mês / Ano', 'Qtd. OS Lançadas', 'Faturamento (R$)']], use_container_width=True)
+            else:
+                st.info("Nenhuma OS com data válida encontrada para o Fluxo Mensal.")
         else:
             st.info("Coluna de Data não identificada para o Fluxo Mensal.")
-
     else:
         st.warning("Nenhum dado encontrado para carregar o Dashboard.")
 
@@ -154,11 +160,11 @@ elif menu == "🔍 Consultar OS":
             st.dataframe(detalhe, use_container_width=True)
 
 # =============================================================================
-# 4. CADASTRAR NOVA OS (COM LIMPEZA AUTOMÁTICA DE CAMPOS)
+# 4. CADASTRAR NOVA OS
 # =============================================================================
 elif menu == "➕ Cadastrar Nova OS":
     st.subheader("➕ Formulário para Cadastrar Nova OS")
-    st.caption("Ao clicar em 'Salvar Ordem de Serviço', todos os campos serão limpos automaticamente para a próxima digitação.")
+    st.caption("Ao clicar em 'Salvar Ordem de Serviço', os campos serão limpos para o próximo registro.")
 
     with st.form("form_nova_os_limpo", clear_on_submit=True):
         col1, col2 = st.columns(2)
@@ -170,7 +176,7 @@ elif menu == "➕ Cadastrar Nova OS":
             servico = st.text_area("Descrição do Serviço")
 
         with col2:
-            valor_input = st.text_input("Valor Total (R$)", value="0,00", help="Pode digitar 1.300,00 ou 500,00")
+            valor_input = st.text_input("Valor Total (R$)", value="0,00", help="Exemplo: 1.300,00 ou 500,00")
             forma_pagto = st.selectbox("Forma de Pagamento", ["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro", "Boleto", "Pagamento Misto"])
             
             val_pix = st.text_input("Valor Pix (Se misto)", value="0,00") if forma_pagto == "Pagamento Misto" else "0"
@@ -205,10 +211,10 @@ elif menu == "➕ Cadastrar Nova OS":
                 df_atualizado = pd.concat([df_os, pd.DataFrame([nova_linha])], ignore_index=True)
                 conn.update(data=df_atualizado)
                 st.cache_data.clear()
-                st.success(f"✅ Ordem de Serviço {num_os} gravada com sucesso no Google Sheets!")
-                st.info("Campos limpos e prontos para o próximo registro.")
+                st.success(f"✅ Ordem de Serviço {num_os} gravada com sucesso!")
+                st.rerun()
             except Exception as e:
-                st.error(f"Erro ao salvar diretamente no Google Sheets: {e}")
+                st.error(f"Erro ao salvar no Google Sheets: {e}")
 
 # =============================================================================
 # 5. ALTERAR OU EXCLUIR OS / PAGAMENTO
@@ -217,9 +223,13 @@ elif menu == "✏️ Alterar OS / Pagamento":
     st.subheader("✏️ Alterar ou Excluir Ordem de Serviço")
     
     if not df_os.empty:
-        col_os = next((c for c in df_os.columns if "OS" in str(c).upper() or "NUMERO" in str(c).upper() or "Nº" in str(c).upper()), df_os.columns[0])
-        lista_os = df_os[col_os].dropna().astype(str).unique()
+        # Identificação explícita da coluna de identificação do número da OS
+        col_os = next(
+            (c for c in df_os.columns if str(c).upper().startswith("OS") or "NUMERO" in str(c).upper() or "Nº" in str(c).upper() or "CÓDIGO" in str(c).upper()), 
+            df_os.columns[0]
+        )
         
+        lista_os = df_os[col_os].dropna().astype(str).unique()
         os_para_editar = st.selectbox("Selecione a OS para alterar ou excluir:", ["-- Selecione a OS --"] + list(lista_os))
         
         if os_para_editar != "-- Selecione a OS --":
@@ -261,7 +271,7 @@ elif menu == "✏️ Alterar OS / Pagamento":
                         st.error(f"Erro ao alterar OS no Google Sheets: {e}")
 
             # -----------------------------------------------------------------
-            # ZONA DE PERIGO: EXCLUSÃO DE OS (FORA DO FORMULÁRIO DE EDIÇÃO)
+            # ZONA DE PERIGO: EXCLUSÃO DE OS
             # -----------------------------------------------------------------
             st.markdown("---")
             st.warning("⚠️ **Zona de Perigo: Exclusão de Registro**")
@@ -271,8 +281,6 @@ elif menu == "✏️ Alterar OS / Pagamento":
             if st.button("🗑️ Excluir esta OS", type="primary", disabled=not confirmar_exclusao):
                 try:
                     conn = st.connection("gsheets", type=GSheetsConnection)
-                    
-                    # Filtra mantendo apenas as OSs diferentes da selecionada
                     df_filtrado = df_os[df_os[col_os].astype(str) != os_para_editar]
                     
                     conn.update(data=df_filtrado)
