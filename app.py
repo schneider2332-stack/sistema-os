@@ -6,7 +6,7 @@ from streamlit_gsheets import GSheetsConnection
 # 1. Configuração Inicial do Painel
 st.set_page_config(page_title="Sistema de OS & Gestão Financeira", layout="wide")
 
-# 2. Conexão com Google Sheets (ttl=0 para atualização instantânea)
+# 2. Conexão com Google Sheets (ttl=0 para leitura instantânea sem cache)
 @st.cache_data(ttl=0)
 def carregar_dados():
     try:
@@ -18,7 +18,6 @@ def carregar_dados():
             return df
         return pd.DataFrame()
     except Exception as e:
-        # Fallback de leitura CSV público caso haja oscilação nas credenciais
         try:
             url_csv = "https://docs.google.com/spreadsheets/d/19Y3_TJGk0svt-0LAJdQ11MGBsLbAzqbE19kRDChP9tA/export?format=csv&gid=417364075"
             df_csv = pd.read_csv(url_csv)
@@ -27,7 +26,7 @@ def carregar_dados():
         except:
             return pd.DataFrame()
 
-# Função para conversão monetária segura (Ex: R$ 500,00 -> 500.0)
+# Conversão monetária segura
 def converter_para_numero(valor):
     if pd.isna(valor) or str(valor).strip() == "":
         return 0.0
@@ -43,7 +42,7 @@ def converter_para_numero(valor):
 
 df_os = carregar_dados()
 
-# Função auxilar para identificar colunas dinamicamente pelo nome
+# Mapeamento dinâmico de colunas
 def identificar_colunas(df):
     cols = list(df.columns)
     c_os = next((c for c in cols if ("OS" in str(c).upper() or "NUMERO" in str(c).upper() or "Nº" in str(c).upper() or "CÓDIGO" in str(c).upper()) and "DATA" not in str(c).upper()), cols[0] if cols else "Número da OS")
@@ -81,7 +80,6 @@ if menu == "📈 Dashboard Financeiro":
         df_calc = df_os.copy()
         df_calc['VALOR_NUM'] = df_calc[col_valor].apply(converter_para_numero) if col_valor else 0.0
 
-        # Totais Gerais
         total_faturado = df_calc['VALOR_NUM'].sum()
         total_qtd_os = len(df_calc)
 
@@ -93,7 +91,6 @@ if menu == "📈 Dashboard Financeiro":
             val_recebido = total_faturado
             val_aberto = 0.0
 
-        # Métricas no Topo
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("📋 Total OS Lançadas", total_qtd_os)
         m2.metric("💵 Faturamento Total", f"R$ {total_faturado:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
@@ -174,7 +171,7 @@ elif menu == "🔍 Consultar OS":
 # =============================================================================
 elif menu == "➕ Cadastrar Nova OS":
     st.subheader("➕ Formulário para Cadastrar Nova OS")
-    st.caption("Ao clicar em 'Salvar Ordem de Serviço', os campos serão limpos para o próximo registro.")
+    st.caption("Preencha os dados abaixo e clique em 'Salvar Ordem de Serviço'.")
 
     with st.form("form_nova_os_limpo", clear_on_submit=True):
         col1, col2 = st.columns(2)
@@ -189,11 +186,13 @@ elif menu == "➕ Cadastrar Nova OS":
             valor_input = st.text_input("Valor Total (R$)", value="0,00", help="Exemplo: 1.300,00 ou 500,00")
             forma_pagto = st.selectbox("Forma de Pagamento", ["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro", "Boleto", "Pagamento Misto"])
             
-            val_pix = st.text_input("Valor Pix (Se misto)", value="0,00") if forma_pagto == "Pagamento Misto" else "0"
-            val_cartao = st.text_input("Valor Cartão (Se misto)", value="0,00") if forma_pagto == "Pagamento Misto" else "0"
-            val_dinheiro = st.text_input("Valor Dinheiro (Se misto)", value="0,00") if forma_pagto == "Pagamento Misto" else "0"
+            st.markdown("**Se o pagamento for Misto, preencha os valores abaixo (opcional):**")
+            col_m1, col_m2, col_m3 = st.columns(3)
+            val_pix = col_m1.text_input("Pix (R$)", value="0,00")
+            val_cartao = col_m2.text_input("Cartão (R$)", value="0,00")
+            val_dinheiro = col_m3.text_input("Dinheiro (R$)", value="0,00")
 
-            status = st.selectbox("Status", ["Aberto", "Em Andamento", "Concluído", "Entregue"])
+            status = st.selectbox("Status Inicial", ["Aberto", "Em Andamento", "Concluído", "Entregue"])
             data_entrada = st.date_input("Data de Entrada", datetime.now())
 
         btn_gravar = st.form_submit_button("💾 Salvar Ordem de Serviço")
@@ -206,16 +205,15 @@ elif menu == "➕ Cadastrar Nova OS":
             else:
                 detalhe_pagto = forma_pagto
 
-            # Mapeamento dinâmico e seguro por nome de coluna
             c_os, c_data, c_cli, c_desc, c_val, c_sit, c_pag, c_tel = identificar_colunas(df_os)
             
             nova_linha = {col: "" for col in df_os.columns}
-            if c_os: nova_linha[c_os] = num_os
+            if c_os: nova_linha[c_os] = str(num_os).strip()
             if c_data: nova_linha[c_data] = data_entrada.strftime('%d/%m/%Y')
             if c_cli: nova_linha[c_cli] = cliente
             if c_desc: nova_linha[c_desc] = servico
             if c_val: nova_linha[c_val] = f"R$ {val_formatado:,.2f}".replace('.', ',')
-            if c_sit: nova_linha[c_sit] = status
+            if c_sit: nova_linha[c_sit] = str(status).strip()
             if c_pag: nova_linha[c_pag] = detalhe_pagto
             if c_tel: nova_linha[c_tel] = telefone
 
@@ -224,7 +222,7 @@ elif menu == "➕ Cadastrar Nova OS":
                 df_atualizado = pd.concat([df_os, pd.DataFrame([nova_linha])], ignore_index=True)
                 conn.update(data=df_atualizado)
                 st.cache_data.clear()
-                st.success(f"✅ Ordem de Serviço {num_os} gravada com sucesso!")
+                st.success(f"✅ Ordem de Serviço {num_os} gravada com sucesso com status **{status}**!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro ao salvar no Google Sheets: {e}")
@@ -244,12 +242,17 @@ elif menu == "✏️ Alterar OS / Pagamento":
         if os_para_editar != "-- Selecione a OS --":
             dados_os = df_os[df_os[col_os].astype(str) == os_para_editar].iloc[0]
             
+            # Descobre o status atual gravado para deixar selecionado de início
+            status_atual = str(dados_os.get(col_sit, "Aberto")).strip()
+            opcoes_status = ["Aberto", "Em Andamento", "Concluído", "Entregue", "Cancelado"]
+            idx_status = opcoes_status.index(status_atual) if status_atual in opcoes_status else 0
+
             with st.form("form_editar_os"):
                 st.markdown(f"**Editando Ordem de Serviço:** `{os_para_editar}`")
                 
                 col1, col2 = st.columns(2)
                 with col1:
-                    novo_status = st.selectbox("Novo Status", ["Aberto", "Em Andamento", "Concluído", "Entregue", "Cancelado"])
+                    novo_status = st.selectbox("Novo Status", opcoes_status, index=idx_status)
                     nova_forma = st.selectbox("Nova Forma de Pagamento", ["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro", "Boleto", "Pagamento Misto"])
                 
                 with col2:
@@ -263,13 +266,13 @@ elif menu == "✏️ Alterar OS / Pagamento":
                         conn = st.connection("gsheets", type=GSheetsConnection)
                         idx = df_os[df_os[col_os].astype(str) == os_para_editar].index[0]
                         
-                        if col_sit: df_os.at[idx, col_sit] = novo_status
+                        if col_sit: df_os.at[idx, col_sit] = str(novo_status).strip()
                         if col_pag: df_os.at[idx, col_pag] = nova_forma
                         if col_val: df_os.at[idx, col_val] = novo_valor
                         
                         conn.update(data=df_os)
                         st.cache_data.clear()
-                        st.success(f"✅ OS {os_para_editar} atualizada com sucesso!")
+                        st.success(f"✅ OS {os_para_editar} atualizada para **{novo_status}** com sucesso!")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Erro ao alterar OS no Google Sheets: {e}")
