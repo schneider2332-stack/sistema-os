@@ -6,7 +6,7 @@ from streamlit_gsheets import GSheetsConnection
 # 1. Configuração Inicial do Painel
 st.set_page_config(page_title="Sistema de OS & Gestão Financeira", layout="wide")
 
-# 2. Conexão com Google Sheets (ttl=0 para leitura instantânea sem cache)
+# 2. Conexão com Google Sheets (ttl=0 força a leitura instantânea de dados novos)
 @st.cache_data(ttl=0)
 def carregar_dados():
     try:
@@ -18,6 +18,7 @@ def carregar_dados():
             return df
         return pd.DataFrame()
     except Exception as e:
+        # Fallback de leitura CSV público caso ocorra oscilação nas credenciais
         try:
             url_csv = "https://docs.google.com/spreadsheets/d/19Y3_TJGk0svt-0LAJdQ11MGBsLbAzqbE19kRDChP9tA/export?format=csv&gid=417364075"
             df_csv = pd.read_csv(url_csv)
@@ -26,7 +27,7 @@ def carregar_dados():
         except:
             return pd.DataFrame()
 
-# Conversão monetária segura
+# Função segura para conversão monetária (Ex: R$ 500,00 -> 500.0)
 def converter_para_numero(valor):
     if pd.isna(valor) or str(valor).strip() == "":
         return 0.0
@@ -42,7 +43,7 @@ def converter_para_numero(valor):
 
 df_os = carregar_dados()
 
-# Mapeamento dinâmico de colunas
+# Mapeamento dinâmico e inteligente das colunas da planilha
 def identificar_colunas(df):
     cols = list(df.columns)
     c_os = next((c for c in cols if ("OS" in str(c).upper() or "NUMERO" in str(c).upper() or "Nº" in str(c).upper() or "CÓDIGO" in str(c).upper()) and "DATA" not in str(c).upper()), cols[0] if cols else "Número da OS")
@@ -167,41 +168,62 @@ elif menu == "🔍 Consultar OS":
             st.dataframe(detalhe, use_container_width=True)
 
 # =============================================================================
-# 4. CADASTRAR NOVA OS
+# 4. CADASTRAR NOVA OS (COM PAGAMENTO MISTO DINÂMICO)
 # =============================================================================
 elif menu == "➕ Cadastrar Nova OS":
     st.subheader("➕ Formulário para Cadastrar Nova OS")
     st.caption("Preencha os dados abaixo e clique em 'Salvar Ordem de Serviço'.")
 
-    with st.form("form_nova_os_limpo", clear_on_submit=True):
-        col1, col2 = st.columns(2)
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        num_os = st.text_input("Número da OS", value=f"OS-{len(df_os)+1:04d}")
+        cliente = st.text_input("Nome do Cliente")
+        telefone = st.text_input("Telefone / WhatsApp")
+        servico = st.text_area("Descrição do Serviço")
+
+    with col2:
+        valor_input = st.text_input("Valor Total (R$)", value="0,00", help="Exemplo: 1.300,00 ou 500,00")
         
-        with col1:
-            num_os = st.text_input("Número da OS", value=f"OS-{len(df_os)+1:04d}")
-            cliente = st.text_input("Nome do Cliente")
-            telefone = st.text_input("Telefone / WhatsApp")
-            servico = st.text_area("Descrição do Serviço")
-
-        with col2:
-            valor_input = st.text_input("Valor Total (R$)", value="0,00", help="Exemplo: 1.300,00 ou 500,00")
-            forma_pagto = st.selectbox("Forma de Pagamento", ["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro", "Boleto", "Pagamento Misto"])
+        # Seleção reativa da forma de pagamento
+        forma_pagto = st.selectbox(
+            "Forma de Pagamento", 
+            ["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro", "Boleto", "Pagamento Misto"]
+        )
+        
+        # Se for Misto, expande as opções automaticamente no momento da escolha
+        detalhes_misto = []
+        if forma_pagto == "Pagamento Misto":
+            st.markdown("##### 💳 Detalhamento do Pagamento Misto")
+            cm1, cm2 = st.columns(2)
+            val_pix = cm1.text_input("Pix (R$)", value="0,00")
+            val_dinheiro = cm2.text_input("Dinheiro (R$)", value="0,00")
             
-            st.markdown("**Se o pagamento for Misto, preencha os valores abaixo (opcional):**")
-            col_m1, col_m2, col_m3 = st.columns(3)
-            val_pix = col_m1.text_input("Pix (R$)", value="0,00")
-            val_cartao = col_m2.text_input("Cartão (R$)", value="0,00")
-            val_dinheiro = col_m3.text_input("Dinheiro (R$)", value="0,00")
+            cm3, cm4 = st.columns(2)
+            val_credito = cm3.text_input("Cartão de Crédito (R$)", value="0,00")
+            val_debito = cm4.text_input("Cartão de Débito (R$)", value="0,00")
+            
+            val_boleto = st.text_input("Boleto (R$)", value="0,00")
+            
+            # Monta o texto legível apenas com os valores preenchidos
+            if converter_para_numero(val_pix) > 0: detalhes_misto.append(f"Pix: R$ {val_pix}")
+            if converter_para_numero(val_dinheiro) > 0: detalhes_misto.append(f"Dinheiro: R$ {val_dinheiro}")
+            if converter_para_numero(val_credito) > 0: detalhes_misto.append(f"Crédito: R$ {val_credito}")
+            if converter_para_numero(val_debito) > 0: detalhes_misto.append(f"Débito: R$ {val_debito}")
+            if converter_para_numero(val_boleto) > 0: detalhes_misto.append(f"Boleto: R$ {val_boleto}")
 
-            status = st.selectbox("Status Inicial", ["Aberto", "Em Andamento", "Concluído", "Entregue"])
-            data_entrada = st.date_input("Data de Entrada", datetime.now())
+        status = st.selectbox("Status Inicial", ["Aberto", "Em Andamento", "Concluído", "Entregue"])
+        data_entrada = st.date_input("Data de Entrada", datetime.now())
 
-        btn_gravar = st.form_submit_button("💾 Salvar Ordem de Serviço")
-
-        if btn_gravar:
+    st.markdown("<br>", unsafe_allow_html=True)
+    if st.button("💾 Salvar Ordem de Serviço", type="primary", use_container_width=True):
+        if not cliente.strip():
+            st.warning("⚠️ Por favor, informe o Nome do Cliente antes de salvar.")
+        else:
             val_formatado = converter_para_numero(valor_input)
             
             if forma_pagto == "Pagamento Misto":
-                detalhe_pagto = f"Misto (Pix: R$ {val_pix} | Cartão: R$ {val_cartao} | Dinheiro: R$ {val_dinheiro})"
+                detalhe_pagto = "Misto (" + " | ".join(detalhes_misto) + ")" if detalhes_misto else "Pagamento Misto"
             else:
                 detalhe_pagto = forma_pagto
 
@@ -242,7 +264,6 @@ elif menu == "✏️ Alterar OS / Pagamento":
         if os_para_editar != "-- Selecione a OS --":
             dados_os = df_os[df_os[col_os].astype(str) == os_para_editar].iloc[0]
             
-            # Descobre o status atual gravado para deixar selecionado de início
             status_atual = str(dados_os.get(col_sit, "Aberto")).strip()
             opcoes_status = ["Aberto", "Em Andamento", "Concluído", "Entregue", "Cancelado"]
             idx_status = opcoes_status.index(status_atual) if status_atual in opcoes_status else 0
