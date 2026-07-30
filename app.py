@@ -3,10 +3,11 @@ import pandas as pd
 from datetime import datetime
 from streamlit_gsheets import GSheetsConnection
 
-# 1. Configuração Inicial do Painel
+# =============================================================================
+# 1. CONFIGURAÇÃO INICIAL E CONEXÃO
+# =============================================================================
 st.set_page_config(page_title="Sistema de OS & Gestão Financeira", layout="wide")
 
-# 2. Conexão com Google Sheets (ttl=0 força a leitura instantânea de dados novos)
 @st.cache_data(ttl=0)
 def carregar_dados():
     try:
@@ -27,7 +28,11 @@ def carregar_dados():
         except:
             return pd.DataFrame()
 
-# Função segura para conversão monetária (Ex: R$ 500,00 -> 500.0)
+# Função para formatação monetária padrão brasileiro (R$ 1.300,00)
+def formatar_moeda_br(valor_float):
+    return f"R$ {valor_float:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+
+# Função segura para conversão monetária (Ex: R$ 1.300,00 -> 1300.0)
 def converter_para_numero(valor):
     if pd.isna(valor) or str(valor).strip() == "":
         return 0.0
@@ -56,7 +61,9 @@ def identificar_colunas(df):
     c_tel = next((c for c in cols if "TEL" in str(c).upper() or "WHATS" in str(c).upper() or "FONE" in str(c).upper()), None)
     return c_os, c_data, c_cli, c_desc, c_val, c_sit, c_pag, c_tel
 
-# 3. Menu Lateral
+# =============================================================================
+# 2. MENU LATERAL
+# =============================================================================
 st.sidebar.title("🛠️ Sistema OS")
 menu = st.sidebar.radio(
     "Navegação",
@@ -94,21 +101,18 @@ if menu == "📈 Dashboard Financeiro":
 
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("📋 Total OS Lançadas", total_qtd_os)
-        m2.metric("💵 Faturamento Total", f"R$ {total_faturado:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
-        m3.metric("✅ Valor Recebido", f"R$ {val_recebido:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
-        m4.metric("⏳ Valor em Aberto", f"R$ {val_aberto:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+        m2.metric("💵 Faturamento Total", formatar_moeda_br(total_faturado))
+        m3.metric("✅ Valor Recebido", formatar_moeda_br(val_recebido))
+        m4.metric("⏳ Valor em Aberto", formatar_moeda_br(val_aberto))
 
         st.markdown("---")
         st.markdown("##### 💳 Faturamento Por Forma de Pagamento")
 
         if col_pagto:
             pix = df_calc[df_calc[col_pagto].astype(str).str.upper().str.contains("PIX", na=False)]['VALOR_NUM'].sum()
-            
-            # Separação explícita entre Crédito e Débito
             credito = df_calc[df_calc[col_pagto].astype(str).str.upper().str.contains("CRÉDITO|CREDITO", na=False)]['VALOR_NUM'].sum()
             debito = df_calc[df_calc[col_pagto].astype(str).str.upper().str.contains("DÉBITO|DEBITO", na=False)]['VALOR_NUM'].sum()
             
-            # Caso existam registros antigos cadastrados apenas como "Cartão", distribuímos proporcionalmente ou mantemos rastreável
             cartao_generico = df_calc[
                 df_calc[col_pagto].astype(str).str.upper().str.contains("CARTÃO|CARTAO", na=False) & 
                 ~df_calc[col_pagto].astype(str).str.upper().str.contains("CRÉDITO|CREDITO|DÉBITO|DEBITO", na=False)
@@ -120,14 +124,14 @@ if menu == "📈 Dashboard Financeiro":
             pix = credito = debito = cartao_generico = dinheiro = boleto = 0.0
 
         p1, p2, p3, p4, p5 = st.columns(5)
-        p1.metric("📱 Pix", f"R$ {pix:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
-        p2.metric("💳 Cartão Crédito", f"R$ {credito:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
-        p3.metric("💳 Cartão Débito", f"R$ {debito:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
-        p4.metric("💵 Dinheiro", f"R$ {dinheiro:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
-        p5.metric("📄 Boleto", f"R$ {boleto:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+        p1.metric("📱 Pix", formatar_moeda_br(pix))
+        p2.metric("💳 Cartão Crédito", formatar_moeda_br(credito))
+        p3.metric("💳 Cartão Débito", formatar_moeda_br(debito))
+        p4.metric("💵 Dinheiro", formatar_moeda_br(dinheiro))
+        p5.metric("📄 Boleto", formatar_moeda_br(boleto))
 
         if cartao_generico > 0:
-            st.caption(f"ℹ️ Registros legados classificados como 'Cartão' sem especificação de Débito/Crédito: **R$ {cartao_generico:,.2f}**".replace('.', ','))
+            st.caption(f"ℹ️ Registros legados classificados como 'Cartão' sem especificação de Débito/Crédito: **{formatar_moeda_br(cartao_generico)}**")
 
         st.markdown("---")
         st.markdown("##### 🗓️ Fluxo de Caixa Mensal (Tabela Mês a Mês)")
@@ -144,9 +148,7 @@ if menu == "📈 Dashboard Financeiro":
                     Faturamento=('VALOR_NUM', 'sum')
                 ).reset_index()
 
-                df_fluxo['Faturamento (R$)'] = df_fluxo['Faturamento'].apply(
-                    lambda x: f"R$ {x:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
-                )
+                df_fluxo['Faturamento (R$)'] = df_fluxo['Faturamento'].apply(formatar_moeda_br)
                 df_fluxo = df_fluxo.rename(columns={'MES_ANO': 'Mês / Ano', 'Qtd_OS': 'Qtd. OS Lançadas'})
                 
                 st.dataframe(df_fluxo[['Mês / Ano', 'Qtd. OS Lançadas', 'Faturamento (R$)']], use_container_width=True)
@@ -182,7 +184,7 @@ elif menu == "🔍 Consultar OS":
             st.dataframe(detalhe, use_container_width=True)
 
 # =============================================================================
-# 4. CADASTRAR NOVA OS (COM PAGAMENTO MISTO DINÂMICO)
+# 4. CADASTRAR NOVA OS (COM FORMATAÇÃO CORRIGIDA)
 # =============================================================================
 elif menu == "➕ Cadastrar Nova OS":
     st.subheader("➕ Formulário para Cadastrar Nova OS")
@@ -199,13 +201,11 @@ elif menu == "➕ Cadastrar Nova OS":
     with col2:
         valor_input = st.text_input("Valor Total (R$)", value="0,00", help="Exemplo: 1.300,00 ou 500,00")
         
-        # Seleção reativa da forma de pagamento
         forma_pagto = st.selectbox(
             "Forma de Pagamento", 
             ["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro", "Boleto", "Pagamento Misto"]
         )
         
-        # Se for Misto, expande as opções automaticamente no momento da escolha
         detalhes_misto = []
         if forma_pagto == "Pagamento Misto":
             st.markdown("##### 💳 Detalhamento do Pagamento Misto")
@@ -219,7 +219,6 @@ elif menu == "➕ Cadastrar Nova OS":
             
             val_boleto = st.text_input("Boleto (R$)", value="0,00")
             
-            # Monta o texto legível apenas com os valores preenchidos
             if converter_para_numero(val_pix) > 0: detalhes_misto.append(f"Pix: R$ {val_pix}")
             if converter_para_numero(val_dinheiro) > 0: detalhes_misto.append(f"Dinheiro: R$ {val_dinheiro}")
             if converter_para_numero(val_credito) > 0: detalhes_misto.append(f"Crédito: R$ {val_credito}")
@@ -248,7 +247,10 @@ elif menu == "➕ Cadastrar Nova OS":
             if c_data: nova_linha[c_data] = data_entrada.strftime('%d/%m/%Y')
             if c_cli: nova_linha[c_cli] = cliente
             if c_desc: nova_linha[c_desc] = servico
-            if c_val: nova_linha[c_val] = f"R$ {val_formatado:,.2f}".replace('.', ',')
+            
+            # --- CORREÇÃO AQUI: USO DA FUNÇÃO DE FORMATAÇÃO PT-BR ---
+            if c_val: nova_linha[c_val] = formatar_moeda_br(val_formatado)
+            
             if c_sit: nova_linha[c_sit] = str(status).strip()
             if c_pag: nova_linha[c_pag] = detalhe_pagto
             if c_tel: nova_linha[c_tel] = telefone
@@ -303,7 +305,11 @@ elif menu == "✏️ Alterar OS / Pagamento":
                         
                         if col_sit: df_os.at[idx, col_sit] = str(novo_status).strip()
                         if col_pag: df_os.at[idx, col_pag] = nova_forma
-                        if col_val: df_os.at[idx, col_val] = novo_valor
+                        
+                        # --- CORREÇÃO AQUI TAMBÉM: EDICÃO FORMATADA CORRETAMENTE ---
+                        if col_val: 
+                            val_num = converter_para_numero(novo_valor)
+                            df_os.at[idx, col_val] = formatar_moeda_br(val_num)
                         
                         conn.update(data=df_os)
                         st.cache_data.clear()
