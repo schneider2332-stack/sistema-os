@@ -103,17 +103,31 @@ if menu == "📈 Dashboard Financeiro":
 
         if col_pagto:
             pix = df_calc[df_calc[col_pagto].astype(str).str.upper().str.contains("PIX", na=False)]['VALOR_NUM'].sum()
-            cartao = df_calc[df_calc[col_pagto].astype(str).str.upper().str.contains("CARTÃO|CARTAO|CRÉDITO|DÉBITO", na=False)]['VALOR_NUM'].sum()
+            
+            # Separação explícita entre Crédito e Débito
+            credito = df_calc[df_calc[col_pagto].astype(str).str.upper().str.contains("CRÉDITO|CREDITO", na=False)]['VALOR_NUM'].sum()
+            debito = df_calc[df_calc[col_pagto].astype(str).str.upper().str.contains("DÉBITO|DEBITO", na=False)]['VALOR_NUM'].sum()
+            
+            # Caso existam registros antigos cadastrados apenas como "Cartão", distribuímos proporcionalmente ou mantemos rastreável
+            cartao_generico = df_calc[
+                df_calc[col_pagto].astype(str).str.upper().str.contains("CARTÃO|CARTAO", na=False) & 
+                ~df_calc[col_pagto].astype(str).str.upper().str.contains("CRÉDITO|CREDITO|DÉBITO|DEBITO", na=False)
+            ]['VALOR_NUM'].sum()
+
             dinheiro = df_calc[df_calc[col_pagto].astype(str).str.upper().str.contains("DINHEIRO|ESPÉCIE", na=False)]['VALOR_NUM'].sum()
             boleto = df_calc[df_calc[col_pagto].astype(str).str.upper().str.contains("BOLETO", na=False)]['VALOR_NUM'].sum()
         else:
-            pix = cartao = dinheiro = boleto = 0.0
+            pix = credito = debito = cartao_generico = dinheiro = boleto = 0.0
 
-        p1, p2, p3, p4 = st.columns(4)
+        p1, p2, p3, p4, p5 = st.columns(5)
         p1.metric("📱 Pix", f"R$ {pix:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
-        p2.metric("💳 Cartão", f"R$ {cartao:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
-        p3.metric("💵 Dinheiro", f"R$ {dinheiro:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
-        p4.metric("📄 Boleto", f"R$ {boleto:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+        p2.metric("💳 Cartão Crédito", f"R$ {credito:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+        p3.metric("💳 Cartão Débito", f"R$ {debito:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+        p4.metric("💵 Dinheiro", f"R$ {dinheiro:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+        p5.metric("📄 Boleto", f"R$ {boleto:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+
+        if cartao_generico > 0:
+            st.caption(f"ℹ️ Registros legados classificados como 'Cartão' sem especificação de Débito/Crédito: **R$ {cartao_generico:,.2f}**".replace('.', ','))
 
         st.markdown("---")
         st.markdown("##### 🗓️ Fluxo de Caixa Mensal (Tabela Mês a Mês)")
