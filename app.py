@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+import re
 from streamlit_gsheets import GSheetsConnection
 
 # =============================================================================
@@ -18,21 +19,21 @@ def carregar_dados():
             df = df.loc[:, ~df.columns.astype(str).str.contains('^Unnamed|^nan', case=False)]
             return df
         return pd.DataFrame()
-    except Exception as e:
+    except Exception:
         # Fallback de leitura CSV público caso ocorra oscilação nas credenciais
         try:
             url_csv = "https://docs.google.com/spreadsheets/d/19Y3_TJGk0svt-0LAJdQ11MGBsLbAzqbE19kRDChP9tA/export?format=csv&gid=417364075"
             df_csv = pd.read_csv(url_csv)
             df_csv = df_csv.dropna(how='all')
             return df_csv
-        except:
+        except Exception:
             return pd.DataFrame()
 
-# Função para formatação monetária padrão brasileiro (R$ 1.300,00)
+# Formatação monetária padrão brasileiro (R$ 1.300,00)
 def formatar_moeda_br(valor_float):
     return f"R$ {valor_float:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
 
-# Função segura para conversão monetária (Ex: R$ 1.300,00 -> 1300.0)
+# Conversão monetária segura (Ex: R$ 1.300,00 -> 1300.0)
 def converter_para_numero(valor):
     if pd.isna(valor) or str(valor).strip() == "":
         return 0.0
@@ -43,12 +44,66 @@ def converter_para_numero(valor):
         val_str = val_str.replace(',', '.')
     try:
         return float(val_str)
-    except:
+    except Exception:
         return 0.0
+
+# Decomposição exata de pagamentos puros e mistos
+def extrair_totais_pagamento(df_escopo, col_pagto, col_val_num):
+    totais = {
+        'pix': 0.0,
+        'credito': 0.0,
+        'debito': 0.0,
+        'dinheiro': 0.0,
+        'boleto': 0.0,
+        'cartao_generico': 0.0
+    }
+    
+    if not col_pagto or df_escopo.empty:
+        return totais
+
+    for _, row in df_escopo.iterrows():
+        forma = str(row.get(col_pagto, '')).strip()
+        val_total = float(row.get(col_val_num, 0.0))
+        
+        if "MISTO" in forma.upper():
+            partes = forma.split('|')
+            for parte in partes:
+                p_upper = parte.upper()
+                match = re.search(r'R\$\s*([\d\.,]+)', parte, re.IGNORECASE) or re.search(r'([\d\.,]+)', parte)
+                val_parcial = converter_para_numero(match.group(1)) if match else 0.0
+                
+                if "PIX" in p_upper:
+                    totais['pix'] += val_parcial
+                elif "CRÉDITO" in p_upper or "CREDITO" in p_upper:
+                    totais['credito'] += val_parcial
+                elif "DÉBITO" in p_upper or "DEBITO" in p_upper:
+                    totais['debito'] += val_parcial
+                elif "DINHEIRO" in p_upper or "ESPÉCIE" in p_upper or "ESPECIE" in p_upper:
+                    totais['dinheiro'] += val_parcial
+                elif "BOLETO" in p_upper:
+                    totais['boleto'] += val_parcial
+                elif "CARTÃO" in p_upper or "CARTAO" in p_upper:
+                    totais['cartao_generico'] += val_parcial
+        else:
+            f_upper = forma.upper()
+            if "PIX" in f_upper:
+                totais['pix'] += val_total
+            elif "CRÉDITO" in f_upper or "CREDITO" in f_upper:
+                totais['credito'] += val_total
+            elif "DÉBITO" in f_upper or "DEBITO" in f_upper:
+                totais['debito'] += val_total
+            elif "DINHEIRO" in f_upper or "ESPÉCIE" in f_upper or "ESPECIE" in f_upper:
+                totais['dinheiro'] += val_total
+            elif "BOLETO" in f_upper:
+                totais['boleto'] += val_total
+            elif "CARTÃO" in f_upper or "CARTAO" in f_upper:
+                totais['cartao_generico'] += val_total
+
+    return totais
 
 df_os = carregar_dados()
 
-# Mapeamento dinâmico e inteligente das colunas da planilha
+# Identificação das colunas da planilha
 def identificar_colunas(df):
     cols = list(df.columns)
     c_os = next((c for c in cols if ("OS" in str(c).upper() or "NUMERO" in str(c).upper() or "Nº" in str(c).upper() or "CÓDIGO" in str(c).upper()) and "DATA" not in str(c).upper()), cols[0] if cols else "Número da OS")
@@ -88,31 +143,26 @@ if menu == "📈 Dashboard Financeiro":
         df_calc = df_os.copy()
         df_calc['VALOR_NUM'] = df_calc[col_valor].apply(converter_para_numero) if col_valor else 0.0
 
-        # Tratar a coluna de data para criar os filtros mensais
+        # Tratamento seguro de datas
         if col_data:
             df_calc['DATA_DT'] = pd.to_datetime(df_calc[col_data], errors='coerce', dayfirst=True)
             df_calc['MES_ANO'] = df_calc['DATA_DT'].dt.strftime('%m/%Y')
             
-            # Lista de meses únicos ordenada
             meses_disponiveis = df_calc['MES_ANO'].dropna().unique().tolist()
-            # Ordena do mais recente para o mais antigo se houver datas válidas
             try:
                 meses_disponiveis.sort(key=lambda x: datetime.strptime(x, '%m/%Y'), reverse=True)
-            except:
+            except Exception:
                 pass
             
             opcoes_mes = ["📅 Todos os Meses (Geral)"] + meses_disponiveis
         else:
             opcoes_mes = ["📅 Todos os Meses (Geral)"]
 
-        # ---------------------------------------------------------------------
-        # SELETOR DE MÊS / PERÍODO
-        # ---------------------------------------------------------------------
+        # Filtro de período
         col_filtro, _ = st.columns([2, 2])
         with col_filtro:
             mes_selecionado = st.selectbox("📆 **Filtrar Período do Dashboard:**", opcoes_mes)
 
-        # Filtrar o dataframe se um mês específico for selecionado
         if mes_selecionado != "📅 Todos os Meses (Geral)" and col_data:
             df_filtrado = df_calc[df_calc['MES_ANO'] == mes_selecionado].copy()
             st.caption(f"Exibindo dados consolidados referentes a **{mes_selecionado}**")
@@ -122,9 +172,7 @@ if menu == "📈 Dashboard Financeiro":
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        # ---------------------------------------------------------------------
-        # CÁLCULOS DAS MÉTRICAS (BASEADO NO FILTRO)
-        # ---------------------------------------------------------------------
+        # Métricas gerais
         total_faturado = df_filtrado['VALOR_NUM'].sum()
         total_qtd_os = len(df_filtrado)
 
@@ -136,7 +184,6 @@ if menu == "📈 Dashboard Financeiro":
             val_recebido = total_faturado
             val_aberto = 0.0
 
-        # CARDS SUPERIORES
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("📋 Total OS Lançadas", total_qtd_os)
         m2.metric("💵 Faturamento Total", formatar_moeda_br(total_faturado))
@@ -146,39 +193,24 @@ if menu == "📈 Dashboard Financeiro":
         st.markdown("---")
         st.markdown(f"##### 💳 Faturamento Por Forma de Pagamento ({'Geral' if mes_selecionado == '📅 Todos os Meses (Geral)' else mes_selecionado})")
 
-        # CÁLCULO POR FORMA DE PAGAMENTO (BASEADO NO FILTRO)
-        if col_pagto:
-            pix = df_filtrado[df_filtrado[col_pagto].astype(str).str.upper().str.contains("PIX", na=False)]['VALOR_NUM'].sum()
-            credito = df_filtrado[df_filtrado[col_pagto].astype(str).str.upper().str.contains("CRÉDITO|CREDITO", na=False)]['VALOR_NUM'].sum()
-            debito = df_filtrado[df_filtrado[col_pagto].astype(str).str.upper().str.contains("DÉBITO|DEBITO", na=False)]['VALOR_NUM'].sum()
-            
-            cartao_generico = df_filtrado[
-                df_filtrado[col_pagto].astype(str).str.upper().str.contains("CARTÃO|CARTAO", na=False) & 
-                ~df_filtrado[col_pagto].astype(str).str.upper().str.contains("CRÉDITO|CREDITO|DÉBITO|DEBITO", na=False)
-            ]['VALOR_NUM'].sum()
-
-            dinheiro = df_filtrado[df_filtrado[col_pagto].astype(str).str.upper().str.contains("DINHEIRO|ESPÉCIE", na=False)]['VALOR_NUM'].sum()
-            boleto = df_filtrado[df_filtrado[col_pagto].astype(str).str.upper().str.contains("BOLETO", na=False)]['VALOR_NUM'].sum()
-        else:
-            pix = credito = debito = cartao_generico = dinheiro = boleto = 0.0
+        # Cálculo preciso dos pagamentos
+        totais_pag = extrair_totais_pagamento(df_filtrado, col_pagto, 'VALOR_NUM')
 
         p1, p2, p3, p4, p5 = st.columns(5)
-        p1.metric("📱 Pix", formatar_moeda_br(pix))
-        p2.metric("💳 Cartão Crédito", formatar_moeda_br(credito))
-        p3.metric("💳 Cartão Débito", formatar_moeda_br(debito))
-        p4.metric("💵 Dinheiro", formatar_moeda_br(dinheiro))
-        p5.metric("📄 Boleto", formatar_moeda_br(boleto))
+        p1.metric("📱 Pix", formatar_moeda_br(totais_pag['pix']))
+        p2.metric("💳 Cartão Crédito", formatar_moeda_br(totais_pag['credito']))
+        p3.metric("💳 Cartão Débito", formatar_moeda_br(totais_pag['debito']))
+        p4.metric("💵 Dinheiro", formatar_moeda_br(totais_pag['dinheiro']))
+        p5.metric("📄 Boleto", formatar_moeda_br(totais_pag['boleto']))
 
-        if cartao_generico > 0:
-            st.caption(f"ℹ️ Registros classificados como 'Cartão' sem especificação de Débito/Crédito neste período: **{formatar_moeda_br(cartao_generico)}**")
+        if totais_pag['cartao_generico'] > 0:
+            st.caption(f"ℹ️ Registros classificados como 'Cartão' genérico neste período: **{formatar_moeda_br(totais_pag['cartao_generico'])}**")
 
         st.markdown("---")
         st.markdown("##### 🗓️ Resumo Comparativo Mês a Mês")
 
-        # TABELA DE RESUMO MÊS A MÊS (Visão Macro)
         if col_data:
             df_fluxo_dados = df_calc.dropna(subset=['DATA_DT']).copy()
-            
             if not df_fluxo_dados.empty:
                 df_fluxo = df_fluxo_dados.groupby('MES_ANO').agg(
                     Qtd_OS=('VALOR_NUM', 'count'),
@@ -195,6 +227,7 @@ if menu == "📈 Dashboard Financeiro":
             st.info("Coluna de Data não identificada.")
     else:
         st.warning("Nenhum dado encontrado para carregar o Dashboard.")
+
 # =============================================================================
 # 2. LISTA DE OS CADASTRADAS
 # =============================================================================
@@ -220,7 +253,7 @@ elif menu == "🔍 Consultar OS":
             st.dataframe(detalhe, use_container_width=True)
 
 # =============================================================================
-# 4. CADASTRAR NOVA OS (COM FORMATAÇÃO CORRIGIDA)
+# 4. CADASTRAR NOVA OS
 # =============================================================================
 elif menu == "➕ Cadastrar Nova OS":
     st.subheader("➕ Formulário para Cadastrar Nova OS")
@@ -283,10 +316,7 @@ elif menu == "➕ Cadastrar Nova OS":
             if c_data: nova_linha[c_data] = data_entrada.strftime('%d/%m/%Y')
             if c_cli: nova_linha[c_cli] = cliente
             if c_desc: nova_linha[c_desc] = servico
-            
-            # --- CORREÇÃO AQUI: USO DA FUNÇÃO DE FORMATAÇÃO PT-BR ---
             if c_val: nova_linha[c_val] = formatar_moeda_br(val_formatado)
-            
             if c_sit: nova_linha[c_sit] = str(status).strip()
             if c_pag: nova_linha[c_pag] = detalhe_pagto
             if c_tel: nova_linha[c_tel] = telefone
@@ -296,7 +326,7 @@ elif menu == "➕ Cadastrar Nova OS":
                 df_atualizado = pd.concat([df_os, pd.DataFrame([nova_linha])], ignore_index=True)
                 conn.update(data=df_atualizado)
                 st.cache_data.clear()
-                st.success(f"✅ Ordem de Serviço {num_os} gravada com sucesso com status **{status}**!")
+                st.success(f"✅ Ordem de Serviço {num_os} gravada com sucesso!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro ao salvar no Google Sheets: {e}")
@@ -320,17 +350,27 @@ elif menu == "✏️ Alterar OS / Pagamento":
             opcoes_status = ["Aberto", "Em Andamento", "Concluído", "Entregue", "Cancelado"]
             idx_status = opcoes_status.index(status_atual) if status_atual in opcoes_status else 0
 
+            forma_atual = str(dados_os.get(col_pag, "Pix")).strip()
+            opcoes_forma = ["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro", "Boleto", "Pagamento Misto"]
+            idx_forma = opcoes_forma.index(forma_atual) if forma_atual in opcoes_forma else (5 if "MISTO" in forma_atual.upper() else 0)
+
             with st.form("form_editar_os"):
                 st.markdown(f"**Editando Ordem de Serviço:** `{os_para_editar}`")
                 
                 col1, col2 = st.columns(2)
                 with col1:
                     novo_status = st.selectbox("Novo Status", opcoes_status, index=idx_status)
-                    nova_forma = st.selectbox("Nova Forma de Pagamento", ["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro", "Boleto", "Pagamento Misto"])
+                    nova_forma = st.selectbox("Forma de Pagamento", opcoes_forma, index=idx_forma)
                 
                 with col2:
                     val_atual = str(dados_os[col_val]) if col_val and col_val in dados_os else "0,00"
-                    novo_valor = st.text_input("Atualizar Valor Total (R$)", value=val_atual)
+                    novo_valor = st.text_input("Valor Total (R$)", value=val_atual)
+
+                detalhe_pagto_edit = nova_forma
+                if nova_forma == "Pagamento Misto":
+                    st.info("ℹ️ Para registrar divisão de valores no pagamento misto, preencha o detalhamento abaixo (ex: `Pix: R$ 500,00 | Boleto: R$ 500,00`):")
+                    valor_misto_texto = st.text_input("Detalhamento Misto", value=forma_atual if "MISTO" in forma_atual.upper() else "Misto (Pix: R$ 0,00 | Boleto: R$ 0,00)")
+                    detalhe_pagto_edit = valor_misto_texto
                 
                 btn_salvar_alt = st.form_submit_button("💾 Salvar Alterações na OS")
                 
@@ -340,16 +380,14 @@ elif menu == "✏️ Alterar OS / Pagamento":
                         idx = df_os[df_os[col_os].astype(str) == os_para_editar].index[0]
                         
                         if col_sit: df_os.at[idx, col_sit] = str(novo_status).strip()
-                        if col_pag: df_os.at[idx, col_pag] = nova_forma
-                        
-                        # --- CORREÇÃO AQUI TAMBÉM: EDICÃO FORMATADA CORRETAMENTE ---
+                        if col_pag: df_os.at[idx, col_pag] = detalhe_pagto_edit
                         if col_val: 
                             val_num = converter_para_numero(novo_valor)
                             df_os.at[idx, col_val] = formatar_moeda_br(val_num)
                         
                         conn.update(data=df_os)
                         st.cache_data.clear()
-                        st.success(f"✅ OS {os_para_editar} atualizada para **{novo_status}** com sucesso!")
+                        st.success(f"✅ OS {os_para_editar} atualizada com sucesso!")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Erro ao alterar OS no Google Sheets: {e}")
