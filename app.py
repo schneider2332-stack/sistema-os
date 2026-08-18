@@ -47,7 +47,7 @@ def converter_para_numero(valor):
     except Exception:
         return 0.0
 
-# Decomposição exata de pagamentos puros e mistos
+# Decomposição exata de pagamentos puros e mistos (aplicada apenas para valores recebidos)
 def extrair_totais_pagamento(df_escopo, col_pagto, col_val_num):
     totais = {
         'pix': 0.0,
@@ -172,15 +172,21 @@ if menu == "📈 Dashboard Financeiro":
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        # Métricas gerais
+        # ---------------------------------------------------------------------
+        # CÁLCULOS DAS MÉTRICAS GERAIS E STATUS
+        # ---------------------------------------------------------------------
         total_faturado = df_filtrado['VALOR_NUM'].sum()
         total_qtd_os = len(df_filtrado)
 
         if col_status:
+            # Identifica OS quitadas/concluídas/entregues
             mask_pago = df_filtrado[col_status].astype(str).str.upper().str.contains("CONCLUÍDO|CONCLUIDO|PAGO|ENTREGUE", na=False)
-            val_recebido = df_filtrado[mask_pago]['VALOR_NUM'].sum()
+            df_recebidos = df_filtrado[mask_pago].copy()
+            
+            val_recebido = df_recebidos['VALOR_NUM'].sum()
             val_aberto = df_filtrado[~mask_pago]['VALOR_NUM'].sum()
         else:
+            df_recebidos = df_filtrado.copy()
             val_recebido = total_faturado
             val_aberto = 0.0
 
@@ -191,20 +197,21 @@ if menu == "📈 Dashboard Financeiro":
         m4.metric("⏳ Valor em Aberto", formatar_moeda_br(val_aberto))
 
         st.markdown("---")
-        st.markdown(f"##### 💳 Faturamento Por Forma de Pagamento ({'Geral' if mes_selecionado == '📅 Todos os Meses (Geral)' else mes_selecionado})")
+        st.markdown(f"##### 💳 Faturamento Efetivado por Forma de Pagamento ({'Geral' if mes_selecionado == '📅 Todos os Meses (Geral)' else mes_selecionado})")
+        st.caption("ℹ️ *Apenas OS com status **Concluído**, **Entregue** ou **Pago** entram na soma abaixo.*")
 
-        # Cálculo preciso dos pagamentos
-        totais_pag = extrair_totais_pagamento(df_filtrado, col_pagto, 'VALOR_NUM')
+        # CÁLCULO EXCLUSIVO COM BASE NAS OS CONCLUÍDAS/ENTREGUES
+        totais_pag = extrair_totais_pagamento(df_recebidos, col_pagto, 'VALOR_NUM')
 
         p1, p2, p3, p4, p5 = st.columns(5)
-        p1.metric("📱 Pix", formatar_moeda_br(totais_pag['pix']))
+        p1.metric("📱 Pix (Recebido)", formatar_moeda_br(totais_pag['pix']))
         p2.metric("💳 Cartão Crédito", formatar_moeda_br(totais_pag['credito']))
         p3.metric("💳 Cartão Débito", formatar_moeda_br(totais_pag['debito']))
         p4.metric("💵 Dinheiro", formatar_moeda_br(totais_pag['dinheiro']))
         p5.metric("📄 Boleto", formatar_moeda_br(totais_pag['boleto']))
 
         if totais_pag['cartao_generico'] > 0:
-            st.caption(f"ℹ️ Registros classificados como 'Cartão' genérico neste período: **{formatar_moeda_br(totais_pag['cartao_generico'])}**")
+            st.caption(f"ℹ️ Registros classificados como 'Cartão' genérico recebidos: **{formatar_moeda_br(totais_pag['cartao_generico'])}**")
 
         st.markdown("---")
         st.markdown("##### 🗓️ Resumo Comparativo Mês a Mês")
