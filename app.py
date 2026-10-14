@@ -10,26 +10,33 @@ from streamlit_gsheets import GSheetsConnection
 st.set_page_config(page_title="Sistema de OS & Gestão Financeira", layout="wide")
 
 @st.cache_data(ttl=0)
+# =============================================================================
+# 1. CONFIGURAÇÃO INICIAL E CONEXÃO
+# =============================================================================
+st.set_page_config(page_title="Sistema de OS & Gestão Financeira", layout="wide")
+
+@st.cache_data(ttl=0)
 def carregar_dados():
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
+        # Se sua aba tiver um nome específico (ex: "OS" ou "Configurações"), use: worksheet="OS"
         df = conn.read(ttl=0)
         if df is not None and not df.empty:
             df = df.dropna(how='all')
             df = df.loc[:, ~df.columns.astype(str).str.contains('^Unnamed|^nan', case=False)]
             return df
+        st.warning("⚠️ Conexão realizada, mas a aba retornou sem linhas de dados.")
         return pd.DataFrame()
-    except Exception:
-        # Fallback de leitura CSV público caso ocorra oscilação nas credenciais
+    except Exception as e:
+        st.error(f"❌ Erro na conexão GSheets (API/Secrets): {e}")
         try:
             url_csv = "https://docs.google.com/spreadsheets/d/19Y3_TJGk0svt-0LAJdQ11MGBsLbAzqbE19kRDChP9tA/export?format=csv&gid=417364075"
             df_csv = pd.read_csv(url_csv)
             df_csv = df_csv.dropna(how='all')
             return df_csv
-        except Exception:
+        except Exception as e_csv:
+            st.error(f"❌ Erro no fallback CSV público: {e_csv}")
             return pd.DataFrame()
-
-# Formatação monetária padrão brasileiro (R$ 1.300,00)
 def formatar_moeda_br(valor_float):
     return f"R$ {valor_float:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
 
