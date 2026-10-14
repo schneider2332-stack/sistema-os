@@ -28,12 +28,11 @@ def converter_para_numero(valor):
 # 2. Carregamento dos dados
 @st.cache_data(ttl=0)
 def carregar_dados():
-    # Tentativa 1: Via conexão oficial GSheets (lendo a partir da linha 4)
+    # Tentativa 1: Via conexão oficial GSheets
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
         df = conn.read(worksheet="Ordens de Serviço", ttl=0)
         if df is not None and not df.empty:
-            # Se a linha de cabeçalho estiver abaixo, localiza a linha com 'Número da OS'
             if 'Número da OS' not in df.columns:
                 for idx, row in df.iterrows():
                     if row.astype(str).str.contains('Número da OS|Numero da OS', case=False).any():
@@ -49,7 +48,7 @@ def carregar_dados():
     # Tentativa 2: Fallback direto via CSV lendo os cabeçalhos da linha 4
     try:
         url_csv = "https://docs.google.com/spreadsheets/d/1IHmxCEP3VdPK7eKR3aoKTsDb-3z6u5auIqlhZoGtRnU/gviz/tq?tqx=out:csv&sheet=Ordens%20de%20Servi%C3%A7o"
-        df_csv = pd.read_csv(url_csv, skiprows=3) # Pula as 3 linhas em branco do topo
+        df_csv = pd.read_csv(url_csv, skiprows=3)
         df_csv = df_csv.dropna(how='all')
         df_csv = df_csv.loc[:, ~df_csv.columns.astype(str).str.contains('^Unnamed|^nan', case=False)]
         return df_csv
@@ -71,7 +70,6 @@ def identificar_colunas(df):
     c_sit = next((c for c in cols if "STATUS" in str(c).upper() or "SITUAÇÃO" in str(c).upper() or "SITUACAO" in str(c).upper()), None)
     c_tel = next((c for c in cols if "TEL" in str(c).upper() or "WHATS" in str(c).upper() or "FONE" in str(c).upper()), None)
     
-    # Colunas diretas de formas de pagamento na planilha
     c_pix = next((c for c in cols if str(c).strip().upper() == "PIX"), None)
     c_cartao = next((c for c in cols if "CART" in str(c).upper()), None)
     c_boleto = next((c for c in cols if "BOLETO" in str(c).upper()), None)
@@ -165,4 +163,174 @@ if menu == "📈 Dashboard Financeiro":
         p3.metric("💵 Dinheiro", formatar_moeda_br(tot_dinheiro))
         p4.metric("📄 Boleto", formatar_moeda_br(tot_boleto))
 
-        st.
+        st.markdown("---")
+        st.markdown("##### 🗓️ Resumo Comparativo Mês a Mês")
+
+        if c_data:
+            df_fluxo_dados = df_calc.dropna(subset=['DATA_DT']).copy()
+            if not df_fluxo_dados.empty:
+                df_fluxo = df_fluxo_dados.groupby('MES_ANO').agg(
+                    Qtd_OS=('VALOR_NUM', 'count'),
+                    Faturamento=('VALOR_NUM', 'sum'),
+                    Recebido=('PAGO_NUM', 'sum') if c_pago else ('VALOR_NUM', 'sum')
+                ).reset_index()
+
+                df_fluxo['Faturamento (R$)'] = df_fluxo['Faturamento'].apply(formatar_moeda_br)
+                df_fluxo['Recebido (R$)'] = df_fluxo['Recebido'].apply(formatar_moeda_br)
+                df_fluxo = df_fluxo.rename(columns={'MES_ANO': 'Mês / Ano', 'Qtd_OS': 'Qtd. OS Lançadas'})
+                
+                st.dataframe(df_fluxo[['Mês / Ano', 'Qtd. OS Lançadas', 'Faturamento (R$)', 'Recebido (R$)']], use_container_width=True)
+            else:
+                st.info("Nenhuma OS com data válida encontrada.")
+        else:
+            st.info("Coluna de Data não identificada.")
+    else:
+        st.warning("Nenhum dado encontrado para carregar o Dashboard. Verifique a conexão com a planilha.")
+
+# =============================================================================
+# 2. LISTA DE OS CADASTRADAS
+# =============================================================================
+elif menu == "📊 OS Cadastradas (Lista)":
+    st.subheader("📋 Tabela Geral de Ordens de Serviço")
+    if not df_os.empty:
+        st.dataframe(df_os, use_container_width=True)
+    else:
+        st.warning("Nenhum registro localizado.")
+
+# =============================================================================
+# 3. CONSULTAR OS
+# =============================================================================
+elif menu == "🔍 Consultar OS":
+    st.subheader("🔍 Consultar Detalhes da OS")
+    if not df_os.empty:
+        c_os, _, _, _, _, _, _, _, _, _, _, _, _ = identificar_colunas(df_os)
+        lista_os = df_os[c_os].dropna().astype(str).unique()
+        
+        os_sel = st.selectbox("Selecione o Número da OS:", lista_os)
+        if os_sel:
+            detalhe = df_os[df_os[c_os].astype(str) == os_sel]
+            st.dataframe(detalhe, use_container_width=True)
+
+# =============================================================================
+# 4. CADASTRAR NOVA OS
+# =============================================================================
+elif menu == "➕ Cadastrar Nova OS":
+    st.subheader("➕ Formulário para Cadastrar Nova OS")
+    st.caption("Preencha os dados abaixo e clique em 'Salvar Ordem de Serviço'.")
+
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        num_os = st.text_input("Número da OS", value=f"{len(df_os)+99000}")
+        cliente = st.text_input("Nome do Cliente")
+        telefone = st.text_input("Telefone / WhatsApp")
+        servico = st.text_area("Descrição do Serviço")
+
+    with col2:
+        valor_input = st.text_input("Valor Total (R$)", value="0,00", help="Exemplo: 1300,00 ou 500,00")
+        forma_pagto = st.selectbox("Forma de Pagamento Principal", ["Pix", "Cartão", "Dinheiro", "Boleto"])
+        status = st.selectbox("Situação da OS", ["Concluída", "Em Aberto", "Parcial", "Paga"])
+        data_entrada = st.date_input("Data de Entrada", datetime.now())
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    if st.button("💾 Salvar Ordem de Serviço", type="primary", use_container_width=True):
+        if not cliente.strip():
+            st.warning("⚠️ Por favor, informe o Nome do Cliente antes de salvar.")
+        else:
+            val_formatado = converter_para_numero(valor_input)
+            c_os, c_data, c_cli, c_desc, c_val, c_pago, c_pend, c_sit, c_tel, c_pix, c_cartao, c_boleto, c_dinheiro = identificar_colunas(df_os)
+            
+            nova_linha = {col: "" for col in df_os.columns}
+            if c_os: nova_linha[c_os] = str(num_os).strip()
+            if c_data: nova_linha[c_data] = data_entrada.strftime('%Y-%m-%d')
+            if c_cli: nova_linha[c_cli] = cliente
+            if c_desc: nova_linha[c_desc] = servico
+            if c_val: nova_linha[c_val] = val_formatado
+            if c_pago: nova_linha[c_pago] = val_formatado if status in ["Concluída", "Paga"] else 0
+            if c_pend: nova_linha[c_pend] = 0 if status in ["Concluída", "Paga"] else val_formatado
+            if c_sit: nova_linha[c_sit] = str(status).strip()
+            if c_tel: nova_linha[c_tel] = telefone
+
+            if c_pix: nova_linha[c_pix] = val_formatado if forma_pagto == "Pix" else 0
+            if c_cartao: nova_linha[c_cartao] = val_formatado if forma_pagto == "Cartão" else 0
+            if c_boleto: nova_linha[c_boleto] = val_formatado if forma_pagto == "Boleto" else 0
+            if c_dinheiro: nova_linha[c_dinheiro] = val_formatado if forma_pagto == "Dinheiro" else 0
+
+            try:
+                conn = st.connection("gsheets", type=GSheetsConnection)
+                df_atualizado = pd.concat([df_os, pd.DataFrame([nova_linha])], ignore_index=True)
+                conn.update(worksheet="Ordens de Serviço", data=df_atualizado)
+                st.cache_data.clear()
+                st.success(f"✅ Ordem de Serviço {num_os} gravada com sucesso!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Erro ao salvar no Google Sheets: {e}")
+
+# =============================================================================
+# 5. ALTERAR OU EXCLUIR OS / PAGAMENTO
+# =============================================================================
+elif menu == "✏️ Alterar OS / Pagamento":
+    st.subheader("✏️ Alterar ou Excluir Ordem de Serviço")
+    
+    if not df_os.empty:
+        c_os, c_data, c_cli, c_desc, c_val, c_pago, c_pend, c_sit, c_tel, _, _, _, _ = identificar_colunas(df_os)
+        
+        lista_os = df_os[c_os].dropna().astype(str).unique()
+        os_para_editar = st.selectbox("Selecione a OS para alterar ou excluir:", ["-- Selecione a OS --"] + list(lista_os))
+        
+        if os_para_editar != "-- Selecione a OS --":
+            dados_os = df_os[df_os[c_os].astype(str) == os_para_editar].iloc[0]
+            
+            status_atual = str(dados_os.get(c_sit, "Em Aberto")).strip()
+            opcoes_status = ["Concluída", "Em Aberto", "Parcial", "Paga", "Cancelado"]
+            idx_status = opcoes_status.index(status_atual) if status_atual in opcoes_status else 0
+
+            with st.form("form_editar_os"):
+                st.markdown(f"**Editando Ordem de Serviço:** `{os_para_editar}`")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    novo_status = st.selectbox("Novo Status", opcoes_status, index=idx_status)
+                
+                with col2:
+                    val_atual = str(dados_os[c_val]) if c_val and c_val in dados_os else "0,00"
+                    novo_valor = st.text_input("Valor Total (R$)", value=val_atual)
+                
+                btn_salvar_alt = st.form_submit_button("💾 Salvar Alterações na OS")
+                
+                if btn_salvar_alt:
+                    try:
+                        conn = st.connection("gsheets", type=GSheetsConnection)
+                        idx = df_os[df_os[c_os].astype(str) == os_para_editar].index[0]
+                        
+                        if c_sit: df_os.at[idx, c_sit] = str(novo_status).strip()
+                        if c_val: 
+                            val_num = converter_para_numero(novo_valor)
+                            df_os.at[idx, c_val] = val_num
+                        
+                        conn.update(worksheet="Ordens de Serviço", data=df_os.reset_index(drop=True))
+                        st.cache_data.clear()
+                        st.success(f"✅ OS {os_para_editar} atualizada com sucesso!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erro ao alterar OS no Google Sheets: {e}")
+
+            # -----------------------------------------------------------------
+            # ZONA DE PERIGO: EXCLUSÃO DE OS
+            # -----------------------------------------------------------------
+            st.markdown("---")
+            st.warning("⚠️ **Zona de Perigo: Exclusão de Registro**")
+            
+            confirmar_exclusao = st.checkbox(f"Confirmo que desejo apagar permanentemente a **{os_para_editar}**")
+            
+            if st.button("🗑️ Excluir esta OS", type="primary", disabled=not confirmar_exclusao):
+                try:
+                    conn = st.connection("gsheets", type=GSheetsConnection)
+                    df_filtrado = df_os[df_os[c_os].astype(str) != os_para_editar].reset_index(drop=True)
+                    
+                    conn.update(worksheet="Ordens de Serviço", data=df_filtrado)
+                    st.cache_data.clear()
+                    st.success(f"🗑️ Ordem de Serviço **{os_para_editar}** excluída com sucesso!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erro ao excluir OS no Google Sheets: {e}")
