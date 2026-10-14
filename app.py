@@ -67,4 +67,4 @@ def extrair_totais_pagamento(df_escopo, col_pagto, col_val_num):
         
         if "MISTO" in forma.upper():
             partes = forma.split('|')
-            for parte in partes
+            for parte in partes:
