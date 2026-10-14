@@ -1,20 +1,17 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-import re
 from streamlit_gsheets import GSheetsConnection
 
 # 1. Configuração Inicial da Página
 st.set_page_config(page_title="Sistema de OS & Gestão Financeira", layout="wide")
 
-# Formatação monetária padrão brasileiro (R$ 1.300,00)
 def formatar_moeda_br(valor_float):
     try:
         return f"R$ {float(valor_float):,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
     except Exception:
         return "R$ 0,00"
 
-# Conversão monetária segura
 def converter_para_numero(valor):
     if pd.isna(valor) or str(valor).strip() == "":
         return 0.0
@@ -28,29 +25,28 @@ def converter_para_numero(valor):
     except Exception:
         return 0.0
 
-# 2. Carregamento dos dados com tratamento de cabeçalho
+# 2. Carregamento e normalização dos dados
 @st.cache_data(ttl=0)
 def carregar_dados():
-    # Tentativa 1: Exportação CSV direta pulando as linhas vazias do topo
+    # Tentativa 1: Exportação CSV direta pulando as 3 primeiras linhas
     try:
         url_csv = "https://docs.google.com/spreadsheets/d/1IHmxCEP3VdPK7eKR3aoKTsDb-3z6u5auIqlhZoGtRnU/gviz/tq?tqx=out:csv&sheet=Ordens%20de%20Servi%C3%A7o"
         df_csv = pd.read_csv(url_csv, skiprows=3)
         df_csv.columns = [str(c).strip() for c in df_csv.columns]
         df_csv = df_csv.dropna(how='all')
-        col_os = next((c for c in df_csv.columns if "OS" in c.upper() or "NUMERO" in c.upper()), df_csv.columns[0])
-        df_csv = df_csv.dropna(subset=[col_os])
-        if not df_csv.empty:
+        if not df_csv.empty and any('OS' in str(c).upper() for c in df_csv.columns):
             return df_csv
     except Exception:
         pass
 
-    # Tentativa 2: Conexão interna GSheets
+    # Tentativa 2: Conexão gsheets localizando a linha onde está 'Número da OS'
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
         df = conn.read(worksheet="Ordens de Serviço", ttl=0)
         if df is not None and not df.empty:
             for idx, row in df.iterrows():
-                if row.astype(str).str.contains('Número da OS|Numero da OS', case=False).any():
+                row_str = " ".join([str(v) for v in row.values])
+                if "Número da OS" in row_str or "Numero da OS" in row_str or "Cliente" in row_str:
                     df.columns = [str(c).strip() for c in df.iloc[idx]]
                     df = df.iloc[idx+1:].reset_index(drop=True)
                     break
@@ -61,16 +57,15 @@ def carregar_dados():
 
     return pd.DataFrame()
 
-# Identificação das colunas da planilha
 def identificar_colunas(df):
     cols = list(df.columns)
-    c_os = next((c for c in cols if ("OS" in str(c).upper() or "NUMERO" in str(c).upper()) and "DATA" not in str(c).upper()), "Número da OS")
+    c_os = next((c for c in cols if ("OS" in str(c).upper() or "NUMERO" in str(c).upper()) and "DATA" not in str(c).upper()), cols[0] if cols else "Número da OS")
     c_data = next((c for c in cols if str(c).strip().upper() == "DATA"), None)
     c_cli = next((c for c in cols if "CLIENTE" in str(c).upper() or "NOME" in str(c).upper()), None)
     c_desc = next((c for c in cols if "DESC" in str(c).upper() or "SERVIÇO" in str(c).upper() or "SERVICO" in str(c).upper()), None)
-    c_val = next((c for c in cols if str(c).strip().upper() == "VALOR TOTAL"), None)
-    c_pago = next((c for c in cols if str(c).strip().upper() == "VALOR PAGO"), None)
-    c_pend = next((c for c in cols if str(c).strip().upper() == "VALOR PENDENTE"), None)
+    c_val = next((c for c in cols if str(c).strip().upper() in ["VALOR TOTAL", "TOTAL", "VALOR"]), None)
+    c_pago = next((c for c in cols if str(c).strip().upper() in ["VALOR PAGO", "PAGO"]), None)
+    c_pend = next((c for c in cols if str(c).strip().upper() in ["VALOR PENDENTE", "PENDENTE"]), None)
     c_sit = next((c for c in cols if "SITUAÇÃO" in str(c).upper() or "SITUACAO" in str(c).upper() or "STATUS" in str(c).upper()), None)
     c_tel = next((c for c in cols if "TEL" in str(c).upper() or "WHATS" in str(c).upper()), None)
     
@@ -82,6 +77,11 @@ def identificar_colunas(df):
     return c_os, c_data, c_cli, c_desc, c_val, c_pago, c_pend, c_sit, c_tel, c_pix, c_cartao, c_boleto, c_dinheiro
 
 df_os = carregar_dados()
+
+# Garantir que a linha de cabeçalho residual não permaneça nos registos
+if not df_os.empty:
+    c_os_check = next((c for c in df_os.columns if "OS" in str(c).upper() or "NUMERO" in str(c).upper()), df_os.columns[0])
+    df_os = df_os[df_os[c_os_check].astype(str).str.strip() != "Número da OS"].reset_index(drop=True)
 
 # 3. Menu Lateral
 st.sidebar.title("🛠️ Sistema OS")
@@ -189,7 +189,7 @@ if menu == "📈 Dashboard Financeiro":
         else:
             st.info("Coluna de Data não identificada.")
     else:
-        st.warning("Nenhum dado encontrado para carregar o Dashboard. Verifique a conexão com a planilha.")
+        st.warning("Nenhum dado encontrado para carregar o Dashboard.")
 
 # =============================================================================
 # 2. LISTA DE OS CADASTRADAS
