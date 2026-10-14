@@ -68,3 +68,35 @@ def extrair_totais_pagamento(df_escopo, col_pagto, col_val_num):
         if "MISTO" in forma.upper():
             partes = forma.split('|')
             for parte in partes:
+                p_upper = parte.upper()
+                match = re.search(r'R\$\s*([\d\.,]+)', parte, re.IGNORECASE) or re.search(r'([\d\.,]+)', parte)
+                val_parcial = converter_para_numero(match.group(1)) if match else 0.0
+                
+                if "PIX" in p_upper:
+                    totais['pix'] += val_parcial
+                elif "CRÉDITO" in p_upper or "CREDITO" in p_upper:
+                    totais['credito'] += val_parcial
+                elif "DÉBITO" in p_upper or "DEBITO" in p_upper:
+                    totais['debito'] += val_parcial
+                elif "DINHEIRO" in p_upper or "ESPÉCIE" in p_upper or "ESPECIE" in p_upper:
+                    totais['dinheiro'] += val_parcial
+                elif "BOLETO" in p_upper:
+                    totais['boleto'] += val_parcial
+                elif "CARTÃO" in p_upper or "CARTAO" in p_upper:
+                    totais['cartao_generico'] += val_parcial
+        else:
+            f_upper = forma.upper()
+            if "PIX" in f_upper:
+                totais['pix'] += val_total
+            elif "CRÉDITO" in f_upper or "CREDITO" in f_upper:
+                totais['credito'] += val_total
+            elif "DÉBITO" in f_upper or "DEBITO" in f_upper:
+                totais['debito'] += val_total
+            elif "DINHEIRO" in f_upper or "ESPÉCIE" in f_upper or "ESPECIE" in f_upper:
+                totais['dinheiro'] += val_total
+            elif "BOLETO" in f_upper:
+                totais['boleto'] += val_total
+            elif "CARTÃO" in f_upper or "CARTAO" in f_upper:
+                totais['cartao_generico'] += val_total
+
+    return totais
