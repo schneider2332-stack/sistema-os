@@ -1,17 +1,14 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-import re
 from streamlit_gsheets import GSheetsConnection
 
 # 1. Configuração Inicial da Página
 st.set_page_config(page_title="Sistema de OS & Gestão Financeira", layout="wide")
 
-# Formatação monetária padrão brasileiro (R$ 1.300,00)
 def formatar_moeda_br(valor_float):
     return f"R$ {valor_float:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
 
-# Conversão monetária segura
 def converter_para_numero(valor):
     if pd.isna(valor) or str(valor).strip() == "":
         return 0.0
@@ -25,10 +22,21 @@ def converter_para_numero(valor):
     except Exception:
         return 0.0
 
-# 2. Carregamento dos dados
+# 2. Carregamento dos dados alinhando o cabeçalho na linha correta
 @st.cache_data(ttl=0)
 def carregar_dados():
-    # Tentativa 1: Via conexão oficial GSheets
+    # Tentativa 1: Fallback CSV direto na aba 'Ordens de Serviço' pulando as linhas vazias do topo
+    try:
+        url_csv = "https://docs.google.com/spreadsheets/d/1IHmxCEP3VdPK7eKR3aoKTsDb-3z6u5auIqlhZoGtRnU/gviz/tq?tqx=out:csv&sheet=Ordens%20de%20Servi%C3%A7o"
+        df_csv = pd.read_csv(url_csv, skiprows=3)
+        df_csv.columns = [str(c).strip() for c in df_csv.columns]
+        df_csv = df_csv.dropna(subset=['Número da OS'])
+        if not df_csv.empty:
+            return df_csv
+    except Exception:
+        pass
+
+    # Tentativa 2: Conexão gsheets localizando dinamicamente a linha do cabeçalho
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
         df = conn.read(worksheet="Ordens de Serviço", ttl=0)
@@ -36,39 +44,28 @@ def carregar_dados():
             if 'Número da OS' not in df.columns:
                 for idx, row in df.iterrows():
                     if row.astype(str).str.contains('Número da OS|Numero da OS', case=False).any():
-                        df.columns = df.iloc[idx]
+                        df.columns = [str(c).strip() for c in df.iloc[idx]]
                         df = df.iloc[idx+1:].reset_index(drop=True)
                         break
-            df = df.dropna(how='all')
-            df = df.loc[:, ~df.columns.astype(str).str.contains('^Unnamed|^nan', case=False)]
+            if 'Número da OS' in df.columns:
+                df = df.dropna(subset=['Número da OS'])
             return df
-    except Exception:
-        pass
-
-    # Tentativa 2: Fallback direto via CSV lendo os cabeçalhos da linha 4
-    try:
-        url_csv = "https://docs.google.com/spreadsheets/d/1IHmxCEP3VdPK7eKR3aoKTsDb-3z6u5auIqlhZoGtRnU/gviz/tq?tqx=out:csv&sheet=Ordens%20de%20Servi%C3%A7o"
-        df_csv = pd.read_csv(url_csv, skiprows=3)
-        df_csv = df_csv.dropna(how='all')
-        df_csv = df_csv.loc[:, ~df_csv.columns.astype(str).str.contains('^Unnamed|^nan', case=False)]
-        return df_csv
     except Exception:
         pass
 
     return pd.DataFrame()
 
-# Identificação inteligente das colunas
 def identificar_colunas(df):
     cols = list(df.columns)
-    c_os = next((c for c in cols if ("OS" in str(c).upper() or "NUMERO" in str(c).upper() or "Nº" in str(c).upper() or "CÓDIGO" in str(c).upper()) and "DATA" not in str(c).upper()), cols[0] if cols else "Número da OS")
-    c_data = next((c for c in cols if "DATA" in str(c).upper() and "PAGAMENTO" not in str(c).upper()), None)
+    c_os = next((c for c in cols if ("OS" in str(c).upper() or "NUMERO" in str(c).upper()) and "DATA" not in str(c).upper()), "Número da OS")
+    c_data = next((c for c in cols if str(c).strip().upper() == "DATA"), None)
     c_cli = next((c for c in cols if "CLIENTE" in str(c).upper() or "NOME" in str(c).upper()), None)
-    c_desc = next((c for c in cols if "DESC" in str(c).upper() or "SERVIÇO" in str(c).upper() or "SERVICO" in str(c).upper()), None)
-    c_val = next((c for c in cols if str(c).strip().upper() in ["VALOR TOTAL", "TOTAL", "VALOR"]), None)
-    c_pago = next((c for c in cols if str(c).strip().upper() in ["VALOR PAGO", "PAGO"]), None)
-    c_pend = next((c for c in cols if str(c).strip().upper() in ["VALOR PENDENTE", "PENDENTE"]), None)
-    c_sit = next((c for c in cols if "STATUS" in str(c).upper() or "SITUAÇÃO" in str(c).upper() or "SITUACAO" in str(c).upper()), None)
-    c_tel = next((c for c in cols if "TEL" in str(c).upper() or "WHATS" in str(c).upper() or "FONE" in str(c).upper()), None)
+    c_desc = next((c for c in cols if "DESC" in str(c).upper() or "SERVIÇO" in str(c).upper()), None)
+    c_val = next((c for c in cols if str(c).strip().upper() == "VALOR TOTAL"), None)
+    c_pago = next((c for c in cols if str(c).strip().upper() == "VALOR PAGO"), None)
+    c_pend = next((c for c in cols if str(c).strip().upper() == "VALOR PENDENTE"), None)
+    c_sit = next((c for c in cols if "SITUAÇÃO" in str(c).upper() or "SITUACAO" in str(c).upper() or "STATUS" in str(c).upper()), None)
+    c_tel = next((c for c in cols if "TEL" in str(c).upper() or "WHATS" in str(c).upper()), None)
     
     c_pix = next((c for c in cols if str(c).strip().upper() == "PIX"), None)
     c_cartao = next((c for c in cols if "CART" in str(c).upper()), None)
@@ -115,7 +112,7 @@ if menu == "📈 Dashboard Financeiro":
             df_calc['DATA_DT'] = pd.to_datetime(df_calc[c_data], errors='coerce')
             df_calc['MES_ANO'] = df_calc['DATA_DT'].dt.strftime('%m/%Y')
             
-            meses_disponiveis = df_calc['MES_ANO'].dropna().unique().tolist()
+            meses_disponiveis = [m for m in df_calc['MES_ANO'].dropna().unique().tolist() if str(m).strip()]
             try:
                 meses_disponiveis.sort(key=lambda x: datetime.strptime(x, '%m/%Y'), reverse=True)
             except Exception:
@@ -127,7 +124,7 @@ if menu == "📈 Dashboard Financeiro":
 
         col_filtro, _ = st.columns([2, 2])
         with col_filtro:
-            mes_selecionado = st.selectbox("📆 **Filtrar Período do Dashboard:**", opcoes_mes)
+            mes_selecionado = st.selectbox("📆 **Filtrar Período do Dashboard:**", opcoes_mes, index=0)
 
         if mes_selecionado != "📅 Todos os Meses (Geral)" and c_data:
             df_filtrado = df_calc[df_calc['MES_ANO'] == mes_selecionado].copy()
@@ -185,7 +182,7 @@ if menu == "📈 Dashboard Financeiro":
         else:
             st.info("Coluna de Data não identificada.")
     else:
-        st.warning("Nenhum dado encontrado para carregar o Dashboard. Verifique a conexão com a planilha.")
+        st.warning("Nenhum dado encontrado para carregar o Dashboard.")
 
 # =============================================================================
 # 2. LISTA DE OS CADASTRADAS
@@ -219,7 +216,6 @@ elif menu == "➕ Cadastrar Nova OS":
     st.caption("Preencha os dados abaixo e clique em 'Salvar Ordem de Serviço'.")
 
     col1, col2 = st.columns(2)
-    
     with col1:
         num_os = st.text_input("Número da OS", value=f"{len(df_os)+99000}")
         cliente = st.text_input("Nome do Cliente")
