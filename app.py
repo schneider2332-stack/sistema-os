@@ -4,22 +4,14 @@ from datetime import datetime
 import re
 from streamlit_gsheets import GSheetsConnection
 
-# =============================================================================
-# 1. CONFIGURAÇÃO INICIAL E CONEXÃO
-# =============================================================================
+# 1. Configuração da página (DEVE SER O PRIMEIRO COMANDO STREAMLIT)
 st.set_page_config(page_title="Sistema de OS & Gestão Financeira", layout="wide")
 
-@st.cache_data(ttl=0)
-# =============================================================================
-# 1. CONFIGURAÇÃO INICIAL E CONEXÃO
-# =============================================================================
-st.set_page_config(page_title="Sistema de OS & Gestão Financeira", layout="wide")
-
+# 2. Carregamento dos dados com diagnóstico
 @st.cache_data(ttl=0)
 def carregar_dados():
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
-        # Se sua aba tiver um nome específico (ex: "OS" ou "Configurações"), use: worksheet="OS"
         df = conn.read(ttl=0)
         if df is not None and not df.empty:
             df = df.dropna(how='all')
