@@ -88,44 +88,13 @@ if menu == "📈 Dashboard Financeiro":
         df_calc = df_os.copy()
         df_calc['VALOR_NUM'] = df_calc[col_valor].apply(converter_para_numero) if col_valor else 0.0
 
-        # Tratamento da coluna de data para gerar as opções de filtro mês a mês
-        if col_data:
-            df_calc['DATA_DT'] = pd.to_datetime(df_calc[col_data], errors='coerce', dayfirst=True)
-            df_calc['MES_ANO'] = df_calc['DATA_DT'].dt.strftime('%m/%Y')
-            
-            meses_disponiveis = [m for m in df_calc['MES_ANO'].dropna().unique() if str(m).strip() != ""]
-            try:
-                meses_disponiveis.sort(key=lambda x: datetime.strptime(x, '%m/%Y'), reverse=True)
-            except Exception:
-                meses_disponiveis.sort(reverse=True)
-            
-            opcoes_mes = ["📅 Todos os Meses (Geral)"] + meses_disponiveis
-        else:
-            opcoes_mes = ["📅 Todos os Meses (Geral)"]
-
-        # Seletor de Período
-        col_filtro, _ = st.columns([2, 2])
-        with col_filtro:
-            mes_selecionado = st.selectbox("📆 **Filtrar Período do Dashboard:**", opcoes_mes)
-
-        # Aplicar filtro aos dados exibidos
-        if mes_selecionado != "📅 Todos os Meses (Geral)" and col_data:
-            df_filtrado = df_calc[df_calc['MES_ANO'] == mes_selecionado].copy()
-            st.caption(f"Exibindo dados consolidados referentes a **{mes_selecionado}**")
-        else:
-            df_filtrado = df_calc.copy()
-            st.caption("Exibindo dados acumulados de **todo o período**")
-
-        st.markdown("<br>", unsafe_allow_html=True)
-
-        # Totais baseados no filtro selecionado
-        total_faturado = df_filtrado['VALOR_NUM'].sum()
-        total_qtd_os = len(df_filtrado)
+        total_faturado = df_calc['VALOR_NUM'].sum()
+        total_qtd_os = len(df_calc)
 
         if col_status:
-            mask_pago = df_filtrado[col_status].astype(str).str.upper().str.contains("CONCLUÍDO|CONCLUIDO|PAGO|ENTREGUE", na=False)
-            val_recebido = df_filtrado[mask_pago]['VALOR_NUM'].sum()
-            val_aberto = df_filtrado[~mask_pago]['VALOR_NUM'].sum()
+            mask_pago = df_calc[col_status].astype(str).str.upper().str.contains("CONCLUÍDO|CONCLUIDO|PAGO|ENTREGUE", na=False)
+            val_recebido = df_calc[mask_pago]['VALOR_NUM'].sum()
+            val_aberto = df_calc[~mask_pago]['VALOR_NUM'].sum()
         else:
             val_recebido = total_faturado
             val_aberto = 0.0
@@ -137,21 +106,20 @@ if menu == "📈 Dashboard Financeiro":
         m4.metric("⏳ Valor em Aberto", formatar_moeda_br(val_aberto))
 
         st.markdown("---")
-        label_periodo_pagto = "Geral" if mes_selecionado == "📅 Todos os Meses (Geral)" else mes_selecionado
-        st.markdown(f"##### 💳 Faturamento Por Forma de Pagamento ({label_periodo_pagto})")
+        st.markdown("##### 💳 Faturamento Por Forma de Pagamento")
 
         if col_pagto:
-            pix = df_filtrado[df_filtrado[col_pagto].astype(str).str.upper().str.contains("PIX", na=False)]['VALOR_NUM'].sum()
-            credito = df_filtrado[df_filtrado[col_pagto].astype(str).str.upper().str.contains("CRÉDITO|CREDITO", na=False)]['VALOR_NUM'].sum()
-            debito = df_filtrado[df_filtrado[col_pagto].astype(str).str.upper().str.contains("DÉBITO|DEBITO", na=False)]['VALOR_NUM'].sum()
+            pix = df_calc[df_calc[col_pagto].astype(str).str.upper().str.contains("PIX", na=False)]['VALOR_NUM'].sum()
+            credito = df_calc[df_calc[col_pagto].astype(str).str.upper().str.contains("CRÉDITO|CREDITO", na=False)]['VALOR_NUM'].sum()
+            debito = df_calc[df_calc[col_pagto].astype(str).str.upper().str.contains("DÉBITO|DEBITO", na=False)]['VALOR_NUM'].sum()
             
-            cartao_generico = df_filtrado[
-                df_filtrado[col_pagto].astype(str).str.upper().str.contains("CARTÃO|CARTAO", na=False) & 
-                ~df_filtrado[col_pagto].astype(str).str.upper().str.contains("CRÉDITO|CREDITO|DÉBITO|DEBITO", na=False)
+            cartao_generico = df_calc[
+                df_calc[col_pagto].astype(str).str.upper().str.contains("CARTÃO|CARTAO", na=False) & 
+                ~df_calc[col_pagto].astype(str).str.upper().str.contains("CRÉDITO|CREDITO|DÉBITO|DEBITO", na=False)
             ]['VALOR_NUM'].sum()
 
-            dinheiro = df_filtrado[df_filtrado[col_pagto].astype(str).str.upper().str.contains("DINHEIRO|ESPÉCIE", na=False)]['VALOR_NUM'].sum()
-            boleto = df_filtrado[df_filtrado[col_pagto].astype(str).str.upper().str.contains("BOLETO", na=False)]['VALOR_NUM'].sum()
+            dinheiro = df_calc[df_calc[col_pagto].astype(str).str.upper().str.contains("DINHEIRO|ESPÉCIE", na=False)]['VALOR_NUM'].sum()
+            boleto = df_calc[df_calc[col_pagto].astype(str).str.upper().str.contains("BOLETO", na=False)]['VALOR_NUM'].sum()
         else:
             pix = credito = debito = cartao_generico = dinheiro = boleto = 0.0
 
@@ -163,16 +131,18 @@ if menu == "📈 Dashboard Financeiro":
         p5.metric("📄 Boleto", formatar_moeda_br(boleto))
 
         if cartao_generico > 0:
-            st.caption(f"ℹ️ Registros classificados como 'Cartão' sem especificação de Débito/Crédito: **{formatar_moeda_br(cartao_generico)}**")
+            st.caption(f"ℹ️ Registros legados classificados como 'Cartão' sem especificação de Débito/Crédito: **{formatar_moeda_br(cartao_generico)}**")
 
         st.markdown("---")
-        st.markdown("##### 🗓️ Resumo Comparativo Mês a Mês")
+        st.markdown("##### 🗓️ Fluxo de Caixa Mensal (Tabela Mês a Mês)")
 
         if col_data:
+            df_calc['DATA_DT'] = pd.to_datetime(df_calc[col_data], errors='coerce', dayfirst=True)
             df_fluxo_dados = df_calc.dropna(subset=['DATA_DT']).copy()
             
             if not df_fluxo_dados.empty:
-                # Agrupamento mês a mês para visão geral
+                df_fluxo_dados['MES_ANO'] = df_fluxo_dados['DATA_DT'].dt.strftime('%m/%Y')
+                
                 df_fluxo = df_fluxo_dados.groupby('MES_ANO').agg(
                     Qtd_OS=('VALOR_NUM', 'count'),
                     Faturamento=('VALOR_NUM', 'sum')
@@ -183,9 +153,9 @@ if menu == "📈 Dashboard Financeiro":
                 
                 st.dataframe(df_fluxo[['Mês / Ano', 'Qtd. OS Lançadas', 'Faturamento (R$)']], use_container_width=True)
             else:
-                st.info("Nenhuma OS com data válida encontrada para o resumo mensal.")
+                st.info("Nenhuma OS com data válida encontrada para o Fluxo Mensal.")
         else:
-            st.info("Coluna de Data não identificada para o resumo mensal.")
+            st.info("Coluna de Data não identificada para o Fluxo Mensal.")
     else:
         st.warning("Nenhum dado encontrado para carregar o Dashboard.")
 
