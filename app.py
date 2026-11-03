@@ -1,55 +1,65 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-from streamlit_gsheets import GSheetsConnection
 import gspread
 from google.oauth2.service_account import Credentials
 
 # =============================================================================
-# 1. CONFIGURAÇÃO INICIAL E ESTRUTURA
+# 1. CONFIGURAÇÃO INICIAL E CONEXÃO NATIVA GSPREAD
 # =============================================================================
 st.set_page_config(page_title="Sistema de OS & Gestão Financeira", layout="wide")
 
 NOME_ABA = "Ordens de Serviço"
 
-def obter_worksheet_gspread():
+COLUNAS_OFICIAIS = [
+    "Número da OS", "Data", "Cliente", "Telefone", "Cidade", 
+    "Descrição", "Valor Total", "Valor Pago", "Valor Pendente", 
+    "Pix", "Cartão de Crédito", "Cartão de Débito", "Boleto", "Dinheiro", 
+    "Situação", "Data do Pagamento", "Observações"
+]
+
+def obter_worksheet():
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive"
     ]
-    secrets_gsheets = st.secrets["connections"]["gsheets"]
+    sec = st.secrets["connections"]["gsheets"]
     cred_dict = {
-        "type": secrets_gsheets.get("type", "service_account"),
-        "project_id": secrets_gsheets.get("project_id"),
-        "private_key_id": secrets_gsheets.get("private_key_id"),
-        "private_key": secrets_gsheets.get("private_key").replace("\\n", "\n"),
-        "client_email": secrets_gsheets.get("client_email"),
-        "client_id": secrets_gsheets.get("client_id"),
-        "auth_uri": secrets_gsheets.get("auth_uri", "https://accounts.google.com/o/oauth2/auth"),
-        "token_uri": secrets_gsheets.get("token_uri", "https://oauth2.googleapis.com/token"),
-        "auth_provider_x509_cert_url": secrets_gsheets.get("auth_provider_x509_cert_url"),
-        "client_x509_cert_url": secrets_gsheets.get("client_x509_cert_url")
+        "type": sec.get("type", "service_account"),
+        "project_id": sec.get("project_id"),
+        "private_key_id": sec.get("private_key_id"),
+        "private_key": sec.get("private_key").replace("\\n", "\n"),
+        "client_email": sec.get("client_email"),
+        "client_id": sec.get("client_id"),
+        "auth_uri": sec.get("auth_uri", "https://accounts.google.com/o/oauth2/auth"),
+        "token_uri": sec.get("token_uri", "https://oauth2.googleapis.com/token"),
+        "auth_provider_x509_cert_url": sec.get("auth_provider_x509_cert_url"),
+        "client_x509_cert_url": sec.get("client_x509_cert_url")
     }
     creds = Credentials.from_service_account_info(cred_dict, scopes=scopes)
     gc = gspread.authorize(creds)
-    sh = gc.open_by_url(secrets_gsheets["spreadsheet"])
+    sh = gc.open_by_url(sec["spreadsheet"])
     return sh.worksheet(NOME_ABA)
 
-@st.cache_data(ttl=0)
-def carregar_dados():
+# Leitura direta sem cache fantasma
+def carregar_dados_direto():
     try:
-        conn = st.connection("gsheets", type=GSheetsConnection)
-        df = conn.read(worksheet=NOME_ABA, header=3, ttl=0)
-        if df is not None and not df.empty:
-            df = df.dropna(how='all')
-            col_os = next((c for c in df.columns if "NÚMERO" in str(c).upper() or "OS" in str(c).upper()), None)
-            if col_os:
-                df = df[df[col_os].notna() & (df[col_os].astype(str).str.strip() != "")]
-                df[col_os] = df[col_os].astype(str).str.replace(r'\.0$', '', regex=True)
-            return df.reset_index(drop=True)
-        return pd.DataFrame()
-    except Exception:
-        return pd.DataFrame()
+        ws = obter_worksheet()
+        linhas = ws.get_all_values()
+        if len(linhas) >= 4:
+            cabecalho = linhas[3]
+            dados = linhas[4:]
+            if dados:
+                df = pd.DataFrame(dados, columns=cabecalho)
+                col_os = next((c for c in df.columns if "NÚMERO" in str(c).upper() or "OS" in str(c).upper()), None)
+                if col_os:
+                    df = df[df[col_os].notna() & (df[col_os].astype(str).str.strip() != "")]
+                    df[col_os] = df[col_os].astype(str).str.replace(r'\.0$', '', regex=True)
+                return df.reset_index(drop=True)
+        return pd.DataFrame(columns=COLUNAS_OFICIAIS)
+    except Exception as e:
+        st.error(f"Erro ao ligar ao Google Sheets: {e}")
+        return pd.DataFrame(columns=COLUNAS_OFICIAIS)
 
 def formatar_moeda_br(valor_float):
     return f"R$ {valor_float:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
@@ -71,7 +81,7 @@ def formatar_valor_campo(valor):
     num = converter_para_numero(valor)
     return f"{num:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
 
-df_os = carregar_dados()
+df_os = carregar_dados_direto()
 
 # =============================================================================
 # 2. MENU LATERAL
@@ -126,10 +136,10 @@ if menu == "📈 Dashboard Financeiro":
 
         if mes_selecionado != "📅 Todos os Meses (Geral)" and 'MES_ANO' in df_calc.columns:
             df_filtrado = df_calc[df_calc['MES_ANO'] == mes_selecionado].copy()
-            st.caption(f"Exibindo dados consolidados referentes a **{mes_selecionado}**")
+            st.caption(f"A apresentar dados consolidados referentes a **{mes_selecionado}**")
         else:
             df_filtrado = df_calc.copy()
-            st.caption("Exibindo dados acumulados de **todo o período**")
+            st.caption("A apresentar dados acumulados de **todo o período**")
 
         st.markdown("<br>", unsafe_allow_html=True)
 
@@ -216,7 +226,7 @@ elif menu == "📊 OS Cadastradas (Lista)":
     if not df_os.empty:
         st.dataframe(df_os, use_container_width=True)
     else:
-        st.info("Nenhum registro localizado.")
+        st.info("Nenhum registo localizado.")
 
 # =============================================================================
 # 3. CONSULTAR OS
@@ -253,7 +263,7 @@ elif menu == "➕ Cadastrar Nova OS":
     with col2:
         forma_pagto = st.selectbox(
             "Forma de Pagamento", 
-            ["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro", "Boleto", "Pagamento Misto"]
+            ["Cartão de Débito", "Cartão de Crédito", "Pix", "Dinheiro", "Boleto", "Pagamento Misto"]
         )
         
         val_pix_input = 0.0
@@ -296,7 +306,7 @@ elif menu == "➕ Cadastrar Nova OS":
             st.warning("⚠️ Por favor, informe o Nome do Cliente antes de salvar.")
         else:
             try:
-                ws = obter_worksheet_gspread()
+                ws = obter_worksheet()
                 headers = ws.row_values(4)
                 nova_linha = {h: "" for h in headers}
 
@@ -358,14 +368,13 @@ elif menu == "➕ Cadastrar Nova OS":
                 alcance = f"A{primeira_linha_livre}:{col_fim_letra}{primeira_linha_livre}"
                 ws.update(range_name=alcance, values=[lista_valores])
 
-                st.cache_data.clear()
                 st.success(f"✅ Ordem de Serviço {num_os} gravada com sucesso!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro ao salvar no Google Sheets: {e}")
 
 # =============================================================================
-# 5. ALTERAR OU EXCLUIR OS / PAGAMENTO (CORREÇÃO DE LOCALIZAÇÃO E LIMPEZA)
+# 5. ALTERAR OU EXCLUIR OS / PAGAMENTO (ATUALIZAÇÃO DE LINHA EM BLOCO)
 # =============================================================================
 elif menu == "✏️ Alterar OS / Pagamento":
     st.subheader("✏️ Alterar ou Excluir Ordem de Serviço")
@@ -438,9 +447,9 @@ elif menu == "✏️ Alterar OS / Pagamento":
 
                 if btn_salvar_alt:
                     try:
-                        ws = obter_worksheet_gspread()
+                        ws = obter_worksheet()
+                        headers = ws.row_values(4)
                         
-                        # Localização EXATA da linha pela Coluna A do Google Sheets
                         coluna_a_raw = ws.col_values(1)
                         coluna_a_limpa = [str(x).replace('.0', '').strip() for x in coluna_a_raw]
                         alvo_os = str(os_para_editar).replace('.0', '').strip()
@@ -451,11 +460,16 @@ elif menu == "✏️ Alterar OS / Pagamento":
                             idx_relativo = df_os[df_os[col_os].astype(str) == os_para_editar].index[0]
                             linha_planilha = idx_relativo + 5
 
-                        headers = ws.row_values(4)
-                        def set_cell(col_name_part, valor):
-                            for idx_h, h in enumerate(headers):
-                                if col_name_part.upper() in str(h).upper():
-                                    ws.update_cell(linha_planilha, idx_h + 1, valor)
+                        # Obtém a linha atual inteira da folha para atualizar em bloco
+                        linha_existente = ws.row_values(linha_planilha)
+                        while len(linha_existente) < len(headers):
+                            linha_existente.append("")
+                        linha_dict = {h: linha_existente[i] if i < len(linha_existente) else "" for i, h in enumerate(headers)}
+
+                        def set_d(nome_chave, val):
+                            for h in headers:
+                                if nome_chave.upper() in str(h).upper():
+                                    linha_dict[h] = val
                                     return
 
                         tem_deb = any("DÉB" in str(h).upper() or "DEB" in str(h).upper() for h in headers)
@@ -467,55 +481,60 @@ elif menu == "✏️ Alterar OS / Pagamento":
                         v_din = converter_para_numero(din_edit)
                         v_bol = converter_para_numero(bol_edit)
 
-                        # Zera primeiro todas as colunas de pagamento para evitar resíduos cruzados
-                        set_cell("PIX", 0.0)
-                        set_cell("BOLETO", 0.0)
-                        set_cell("DINHEIRO", 0.0)
-                        if tem_cred: set_cell("CRÉD", 0.0)
-                        if tem_deb: set_cell("DÉB", 0.0)
-                        if not tem_cred and not tem_deb: set_cell("CART", 0.0)
+                        # Limpa previamente todas as colunas de pagamento
+                        set_d("PIX", 0.0)
+                        set_d("BOLETO", 0.0)
+                        set_d("DINHEIRO", 0.0)
+                        if tem_cred: set_d("CRÉD", 0.0)
+                        if tem_deb: set_d("DÉB", 0.0)
+                        if not tem_cred and not tem_deb: set_d("CART", 0.0)
 
                         if nova_forma == "Pagamento Misto":
                             val_final = v_pix + v_cred + v_deb + v_din + v_bol
-                            set_cell("PIX", v_pix)
-                            set_cell("BOLETO", v_bol)
-                            set_cell("DINHEIRO", v_din)
-                            if tem_cred: set_cell("CRÉD", v_cred)
-                            if tem_deb: set_cell("DÉB", v_deb)
-                            if not tem_cred and not tem_deb:
-                                set_cell("CART", v_cred + v_deb)
-                            set_cell("OBS", "Pagamento Misto")
+                            set_d("PIX", v_pix)
+                            set_d("BOLETO", v_bol)
+                            set_d("DINHEIRO", v_din)
+                            if tem_cred: set_d("CRÉD", v_cred)
+                            if tem_deb: set_d("DÉB", v_deb)
+                            if not tem_cred and not tem_deb: set_d("CART", v_cred + v_deb)
+                            set_d("OBS", "Pagamento Misto")
                         else:
                             val_final = converter_para_numero(novo_valor)
                             if nova_forma == "Pix":
-                                set_cell("PIX", val_final)
-                                set_cell("OBS", "Pix")
+                                set_d("PIX", val_final)
+                                set_d("OBS", "Pix")
                             elif nova_forma == "Boleto":
-                                set_cell("BOLETO", val_final)
-                                set_cell("OBS", "Boleto")
+                                set_d("BOLETO", val_final)
+                                set_d("OBS", "Boleto")
                             elif nova_forma == "Dinheiro":
-                                set_cell("DINHEIRO", val_final)
-                                set_cell("OBS", "Dinheiro")
+                                set_d("DINHEIRO", val_final)
+                                set_d("OBS", "Dinheiro")
                             elif nova_forma == "Cartão de Crédito":
-                                if tem_cred: set_cell("CRÉD", val_final)
-                                else: set_cell("CART", val_final)
-                                set_cell("OBS", "Cartão de Crédito")
+                                if tem_cred: set_d("CRÉD", val_final)
+                                else: set_d("CART", val_final)
+                                set_d("OBS", "Cartão de Crédito")
                             elif nova_forma == "Cartão de Débito":
-                                if tem_deb: set_cell("DÉB", val_final)
-                                else: set_cell("CART", val_final)
-                                set_cell("OBS", "Cartão de Débito")
+                                if tem_deb: set_d("DÉB", val_final)
+                                else: set_d("CART", val_final)
+                                set_d("OBS", "Cartão de Débito")
 
-                        set_cell("SITUA", str(novo_status).strip())
-                        set_cell("TOTAL", val_final)
+                        set_d("SITUA", str(novo_status).strip())
+                        set_d("TOTAL", val_final)
 
                         if novo_status == "Paga":
-                            set_cell("VALOR PAG", val_final)
-                            set_cell("PEND", 0.0)
+                            set_d("VALOR PAG", val_final)
+                            set_d("PEND", 0.0)
                         else:
-                            set_cell("VALOR PAG", 0.0)
-                            set_cell("PEND", val_final)
+                            set_d("VALOR PAG", 0.0)
+                            set_d("PEND", val_final)
 
-                        st.cache_data.clear()
+                        nova_lista = [linha_dict.get(h, "") for h in headers]
+                        col_fim_letra = chr(64 + len(headers)) if len(headers) <= 26 else "Q"
+                        alcance = f"A{linha_planilha}:{col_fim_letra}{linha_planilha}"
+                        
+                        # Atualização atómica em bloco
+                        ws.update(range_name=alcance, values=[nova_lista])
+
                         st.success(f"✅ OS {os_para_editar} atualizada para **{nova_forma}** com sucesso!")
                         st.rerun()
                     except Exception as e:
@@ -530,7 +549,7 @@ elif menu == "✏️ Alterar OS / Pagamento":
             
             if st.button("🗑️ Excluir esta OS", type="secondary", disabled=not confirmar_exclusao):
                 try:
-                    ws = obter_worksheet_gspread()
+                    ws = obter_worksheet()
                     coluna_a_raw = ws.col_values(1)
                     coluna_a_limpa = [str(x).replace('.0', '').strip() for x in coluna_a_raw]
                     alvo_os = str(os_para_editar).replace('.0', '').strip()
@@ -542,7 +561,6 @@ elif menu == "✏️ Alterar OS / Pagamento":
                         linha_planilha = idx_relativo + 5
                     
                     ws.delete_rows(linha_planilha)
-                    st.cache_data.clear()
                     st.success(f"🗑️ Ordem de Serviço {os_para_editar} excluída com sucesso!")
                     st.rerun()
                 except Exception as e:
