@@ -50,8 +50,11 @@ def carregar_dados():
         df = conn.read(worksheet=NOME_ABA, header=3, ttl=0)
         if df is not None and not df.empty:
             df = df.dropna(how='all')
-            if "Número da OS" in df.columns:
-                df = df[df["Número da OS"].notna() & (df["Número da OS"].astype(str).str.strip() != "")]
+            # Garante que números de OS não fiquem com .0 e remove vazios
+            col_os = next((c for c in df.columns if "NÚMERO" in str(c).upper() or "OS" in str(c).upper()), None)
+            if col_os:
+                df = df[df[col_os].notna() & (df[col_os].astype(str).str.strip() != "")]
+                df[col_os] = df[col_os].astype(str).str.replace(r'\.0$', '', regex=True)
             return df
         return pd.DataFrame(columns=COLUNAS_OFICIAIS)
     except Exception:
@@ -61,7 +64,7 @@ def formatar_moeda_br(valor_float):
     return f"R$ {valor_float:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
 
 def converter_para_numero(valor):
-    if pd.isna(valor) or str(valor).strip() == "":
+    if pd.isna(valor) or str(valor).strip() == "" or str(valor).strip().lower() == "nan":
         return 0.0
     val_str = str(valor).replace('R$', '').strip()
     if ',' in val_str and '.' in val_str:
@@ -72,6 +75,10 @@ def converter_para_numero(valor):
         return float(val_str)
     except Exception:
         return 0.0
+
+def formatar_valor_campo(valor):
+    num = converter_para_numero(valor)
+    return f"{num:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
 
 df_os = carregar_dados()
 
@@ -197,7 +204,7 @@ if menu == "📈 Dashboard Financeiro":
             else:
                 st.info("Nenhuma OS com data válida encontrada.")
     else:
-        st.info("Nenhuma OS encontrada. Cadastre uma nova OS para iniciar o Dashboard.")
+        st.info("Nenhuma OS cadastrada ainda.")
 
 # =============================================================================
 # 2. LISTA DE OS CADASTRADAS
@@ -225,7 +232,7 @@ elif menu == "🔍 Consultar OS":
         st.info("Nenhuma OS cadastrada para consulta.")
 
 # =============================================================================
-# 4. CADASTRAR NOVA OS (COM SUPORTE A PAGAMENTO MISTO)
+# 4. CADASTRAR NOVA OS
 # =============================================================================
 elif menu == "➕ Cadastrar Nova OS":
     st.subheader("➕ Formulário para Cadastrar Nova OS")
@@ -247,7 +254,6 @@ elif menu == "➕ Cadastrar Nova OS":
             ["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro", "Boleto", "Pagamento Misto"]
         )
         
-        # Variáveis dos valores
         val_pix_input = 0.0
         val_cred_input = 0.0
         val_deb_input = 0.0
@@ -274,7 +280,7 @@ elif menu == "➕ Cadastrar Nova OS":
             
             total_misto = val_pix_input + val_cred_input + val_deb_input + val_din_input + val_bol_input
             valor_total_efetivo = total_misto
-            st.info(f"**Total Consolidado do Pagamento Misto:** {formatar_moeda_br(total_misto)}")
+            st.info(f"**Total Consolidado:** {formatar_moeda_br(total_misto)}")
         else:
             valor_input = st.text_input("Valor Total (R$)", value="0,00")
             valor_total_efetivo = converter_para_numero(valor_input)
@@ -287,7 +293,6 @@ elif menu == "➕ Cadastrar Nova OS":
         if not cliente.strip():
             st.warning("⚠️ Por favor, informe o Nome do Cliente antes de salvar.")
         else:
-            # Montar a linha com base nas colunas oficiais
             nova_linha = {c: "" for c in COLUNAS_OFICIAIS}
             nova_linha["Número da OS"] = str(num_os).strip()
             nova_linha["Data"] = data_entrada.strftime('%Y-%m-%d')
@@ -307,14 +312,13 @@ elif menu == "➕ Cadastrar Nova OS":
 
             nova_linha["Situação"] = str(status).strip()
 
-            # Distribuição financeira
             if forma_pagto == "Pagamento Misto":
                 nova_linha["Pix"] = val_pix_input
                 nova_linha["Cartão de Crédito"] = val_cred_input
                 nova_linha["Cartão de Débito"] = val_deb_input
                 nova_linha["Dinheiro"] = val_din_input
                 nova_linha["Boleto"] = val_bol_input
-                nova_linha["Observações"] = "Pagamento Misto (fechamento diário)"
+                nova_linha["Observações"] = "Pagamento Misto"
             elif forma_pagto == "Pix":
                 nova_linha["Pix"] = valor_total_efetivo
             elif forma_pagto == "Cartão de Crédito":
@@ -336,13 +340,13 @@ elif menu == "➕ Cadastrar Nova OS":
                 ws.update(range_name=alcance, values=[lista_valores])
 
                 st.cache_data.clear()
-                st.success(f"✅ Ordem de Serviço {num_os} gravada com sucesso com pagamento via **{forma_pagto}**!")
+                st.success(f"✅ Ordem de Serviço {num_os} gravada com sucesso!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro ao salvar no Google Sheets: {e}")
 
 # =============================================================================
-# 5. ALTERAR OU EXCLUIR OS / PAGAMENTO
+# 5. ALTERAR OU EXCLUIR OS / PAGAMENTO (FORMULÁRIO CORRIGIDO)
 # =============================================================================
 elif menu == "✏️ Alterar OS / Pagamento":
     st.subheader("✏️ Alterar ou Excluir Ordem de Serviço")
@@ -357,31 +361,56 @@ elif menu == "✏️ Alterar OS / Pagamento":
             opcoes_status = ["Paga", "Em Aberto", "Parcial"]
             idx_status = opcoes_status.index(status_atual) if status_atual in opcoes_status else 0
 
+            # Descobre forma de pagamento predominante registrada
+            v_pix_at = converter_para_numero(dados_os.get("Pix", 0.0))
+            v_cred_at = converter_para_numero(dados_os.get("Cartão de Crédito", 0.0))
+            v_deb_at = converter_para_numero(dados_os.get("Cartão de Débito", 0.0))
+            v_din_at = converter_para_numero(dados_os.get("Dinheiro", 0.0))
+            v_bol_at = converter_para_numero(dados_os.get("Boleto", 0.0))
+
+            contagem_formas = sum([1 for v in [v_pix_at, v_cred_at, v_deb_at, v_din_at, v_bol_at] if v > 0])
+            
+            if contagem_formas > 1:
+                forma_inicial = "Pagamento Misto"
+            elif v_pix_at > 0:
+                forma_inicial = "Pix"
+            elif v_cred_at > 0:
+                forma_inicial = "Cartão de Crédito"
+            elif v_deb_at > 0:
+                forma_inicial = "Cartão de Débito"
+            elif v_din_at > 0:
+                forma_inicial = "Dinheiro"
+            elif v_bol_at > 0:
+                forma_inicial = "Boleto"
+            else:
+                forma_inicial = "Boleto"
+
+            opcoes_pag = ["Boleto", "Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro", "Pagamento Misto"]
+            idx_pag = opcoes_pag.index(forma_inicial) if forma_inicial in opcoes_pag else 0
+
             with st.form("form_editar_os"):
                 st.markdown(f"**Editando Ordem de Serviço:** `{os_para_editar}`")
                 c1, c2 = st.columns(2)
                 with c1:
                     novo_status = st.selectbox("Novo Status", opcoes_status, index=idx_status)
-                    nova_forma = st.selectbox(
-                        "Forma de Pagamento", 
-                        ["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro", "Boleto", "Pagamento Misto"]
-                    )
+                    nova_forma = st.selectbox("Forma de Pagamento", opcoes_pag, index=idx_pag)
                 with c2:
-                    val_atual = str(dados_os.get("Valor Total", "0,00"))
+                    val_atual = formatar_valor_campo(dados_os.get("Valor Total", 0.0))
                     novo_valor = st.text_input("Valor Total (R$)", value=val_atual)
 
-                # Se for misto na edição, permite ajustar os campos individuais
                 st.markdown("##### 💳 Ajuste por Meio de Pagamento (se Misto)")
                 e_col1, e_col2, e_col3 = st.columns(3)
-                pix_edit = e_col1.text_input("Pix (R$)", value=str(dados_os.get("Pix", "0,00")))
-                cred_edit = e_col2.text_input("Cartão de Crédito (R$)", value=str(dados_os.get("Cartão de Crédito", "0,00")))
-                deb_edit = e_col3.text_input("Cartão de Débito (R$)", value=str(dados_os.get("Cartão de Débito", "0,00")))
+                pix_edit = e_col1.text_input("Pix (R$)", value=formatar_valor_campo(v_pix_at))
+                cred_edit = e_col2.text_input("Cartão de Crédito (R$)", value=formatar_valor_campo(v_cred_at))
+                deb_edit = e_col3.text_input("Cartão de Débito (R$)", value=formatar_valor_campo(v_deb_at))
                 
                 e_col4, e_col5 = st.columns(2)
-                din_edit = e_col4.text_input("Dinheiro (R$)", value=str(dados_os.get("Dinheiro", "0,00")))
-                bol_edit = e_col5.text_input("Boleto (R$)", value=str(dados_os.get("Boleto", "0,00")))
+                din_edit = e_col4.text_input("Dinheiro (R$)", value=formatar_valor_campo(v_din_at))
+                bol_edit = e_col5.text_input("Boleto (R$)", value=formatar_valor_campo(v_bol_at))
 
-                btn_salvar_alt = st.form_submit_button("💾 Salvar Alterações na OS")
+                # Botão de Envio obrigatório dentro do bloco do formulário
+                btn_salvar_alt = st.form_submit_button("💾 Salvar Alterações na OS", type="primary", use_container_width=True)
+
                 if btn_salvar_alt:
                     try:
                         ws = obter_worksheet_gspread()
@@ -427,5 +456,25 @@ elif menu == "✏️ Alterar OS / Pagamento":
                         st.rerun()
                     except Exception as e:
                         st.error(f"Erro ao alterar OS no Google Sheets: {e}")
+
+            # -----------------------------------------------------------------
+            # ZONA DE EXCLUSÃO DE REGISTRO
+            # -----------------------------------------------------------------
+            st.markdown("---")
+            st.warning("⚠️ **Zona de Perigo: Exclusão de Registro**")
+            confirmar_exclusao = st.checkbox(f"Confirmo que desejo apagar permanentemente a OS **{os_para_editar}**")
+            
+            if st.button("🗑️ Excluir esta OS", type="secondary", disabled=not confirmar_exclusao):
+                try:
+                    ws = obter_worksheet_gspread()
+                    idx_relativo = df_os[df_os[col_os].astype(str) == os_para_editar].index[0]
+                    linha_planilha = idx_relativo + 5
+                    
+                    ws.delete_rows(linha_planilha)
+                    st.cache_data.clear()
+                    st.success(f"🗑️ Ordem de Serviço {os_para_editar} excluída com sucesso!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erro ao excluir OS no Google Sheets: {e}")
     else:
         st.info("Nenhuma OS disponível para alteração.")
