@@ -46,7 +46,7 @@ def carregar_dados():
             if col_os:
                 df = df[df[col_os].notna() & (df[col_os].astype(str).str.strip() != "")]
                 df[col_os] = df[col_os].astype(str).str.replace(r'\.0$', '', regex=True)
-            return df
+            return df.reset_index(drop=True)
         return pd.DataFrame()
     except Exception:
         return pd.DataFrame()
@@ -148,7 +148,6 @@ if menu == "📈 Dashboard Financeiro":
         label_periodo_pagto = "Geral" if mes_selecionado == "📅 Todos os Meses (Geral)" else mes_selecionado
         st.markdown(f"##### 💳 Faturamento Por Forma de Pagamento ({label_periodo_pagto})")
 
-        # Detecção resiliente de colunas financeiras
         col_pix = next((c for c in df_os.columns if "PIX" in str(c).upper()), None)
         col_cred = next((c for c in df_os.columns if "CRÉD" in str(c).upper() or "CRED" in str(c).upper()), None)
         col_deb = next((c for c in df_os.columns if "DÉB" in str(c).upper() or "DEB" in str(c).upper()), None)
@@ -163,7 +162,6 @@ if menu == "📈 Dashboard Financeiro":
         dinheiro = df_filtrado[col_dinheiro].apply(converter_para_numero).sum() if col_dinheiro else 0.0
         boleto = df_filtrado[col_boleto].apply(converter_para_numero).sum() if col_boleto else 0.0
 
-        # Se houver apenas a coluna "Cartão", verifica pelas observações se foi Crédito ou Débito
         if col_cartao_geral:
             val_cartao_total = df_filtrado[col_cartao_geral].apply(converter_para_numero).sum()
             if col_obs:
@@ -300,8 +298,6 @@ elif menu == "➕ Cadastrar Nova OS":
             try:
                 ws = obter_worksheet_gspread()
                 headers = ws.row_values(4)
-
-                # Cria dicionário indexado exatamente pelos cabeçalhos existentes na linha 4
                 nova_linha = {h: "" for h in headers}
 
                 def set_col(nome_chave, val):
@@ -327,7 +323,6 @@ elif menu == "➕ Cadastrar Nova OS":
                     set_col("VALOR PAG", 0.0)
                     set_col("PEND", valor_total_efetivo)
 
-                # Gravação adaptativa das formas de pagamento
                 tem_col_deb = any("DÉB" in str(h).upper() or "DEB" in str(h).upper() for h in headers)
                 tem_col_cred = any("CRÉD" in str(h).upper() or "CRED" in str(h).upper() for h in headers)
 
@@ -343,16 +338,12 @@ elif menu == "➕ Cadastrar Nova OS":
                 elif forma_pagto == "Pix":
                     set_col("PIX", valor_total_efetivo)
                 elif forma_pagto == "Cartão de Crédito":
-                    if tem_col_cred:
-                        set_col("CRÉD", valor_total_efetivo)
-                    else:
-                        set_col("CART", valor_total_efetivo)
+                    if tem_col_cred: set_col("CRÉD", valor_total_efetivo)
+                    else: set_col("CART", valor_total_efetivo)
                     set_col("OBS", "Cartão de Crédito")
                 elif forma_pagto == "Cartão de Débito":
-                    if tem_col_deb:
-                        set_col("DÉB", valor_total_efetivo)
-                    else:
-                        set_col("CART", valor_total_efetivo)
+                    if tem_col_deb: set_col("DÉB", valor_total_efetivo)
+                    else: set_col("CART", valor_total_efetivo)
                     set_col("OBS", "Cartão de Débito")
                 elif forma_pagto == "Boleto":
                     set_col("BOLETO", valor_total_efetivo)
@@ -374,7 +365,7 @@ elif menu == "➕ Cadastrar Nova OS":
                 st.error(f"Erro ao salvar no Google Sheets: {e}")
 
 # =============================================================================
-# 5. ALTERAR OU EXCLUIR OS / PAGAMENTO
+# 5. ALTERAR OU EXCLUIR OS / PAGAMENTO (CORREÇÃO DE LOCALIZAÇÃO E LIMPEZA)
 # =============================================================================
 elif menu == "✏️ Alterar OS / Pagamento":
     st.subheader("✏️ Alterar ou Excluir Ordem de Serviço")
@@ -389,14 +380,12 @@ elif menu == "✏️ Alterar OS / Pagamento":
             opcoes_status = ["Paga", "Em Aberto", "Parcial"]
             idx_status = opcoes_status.index(status_atual) if status_atual in opcoes_status else 0
 
-            # Detecção dos valores atuais para pré-preenchimento
             v_pix_at = converter_para_numero(dados_os.get("Pix", 0.0))
             v_cred_at = converter_para_numero(dados_os.get("Cartão de Crédito", 0.0))
             v_deb_at = converter_para_numero(dados_os.get("Cartão de Débito", 0.0))
             v_din_at = converter_para_numero(dados_os.get("Dinheiro", 0.0))
             v_bol_at = converter_para_numero(dados_os.get("Boleto", 0.0))
             
-            # Se a coluna for apenas "Cartão"
             if v_cred_at == 0 and v_deb_at == 0 and "Cartão" in dados_os:
                 v_cart_geral = converter_para_numero(dados_os.get("Cartão", 0.0))
                 obs_texto = str(dados_os.get("Observações", "")).upper()
@@ -409,12 +398,12 @@ elif menu == "✏️ Alterar OS / Pagamento":
             
             if contagem_formas > 1:
                 forma_inicial = "Pagamento Misto"
-            elif v_pix_at > 0:
-                forma_inicial = "Pix"
-            elif v_cred_at > 0:
-                forma_inicial = "Cartão de Crédito"
             elif v_deb_at > 0:
                 forma_inicial = "Cartão de Débito"
+            elif v_cred_at > 0:
+                forma_inicial = "Cartão de Crédito"
+            elif v_pix_at > 0:
+                forma_inicial = "Pix"
             elif v_din_at > 0:
                 forma_inicial = "Dinheiro"
             elif v_bol_at > 0:
@@ -450,8 +439,17 @@ elif menu == "✏️ Alterar OS / Pagamento":
                 if btn_salvar_alt:
                     try:
                         ws = obter_worksheet_gspread()
-                        idx_relativo = df_os[df_os[col_os].astype(str) == os_para_editar].index[0]
-                        linha_planilha = idx_relativo + 5
+                        
+                        # Localização EXATA da linha pela Coluna A do Google Sheets
+                        coluna_a_raw = ws.col_values(1)
+                        coluna_a_limpa = [str(x).replace('.0', '').strip() for x in coluna_a_raw]
+                        alvo_os = str(os_para_editar).replace('.0', '').strip()
+
+                        if alvo_os in coluna_a_limpa:
+                            linha_planilha = coluna_a_limpa.index(alvo_os) + 1
+                        else:
+                            idx_relativo = df_os[df_os[col_os].astype(str) == os_para_editar].index[0]
+                            linha_planilha = idx_relativo + 5
 
                         headers = ws.row_values(4)
                         def set_cell(col_name_part, valor):
@@ -469,6 +467,14 @@ elif menu == "✏️ Alterar OS / Pagamento":
                         v_din = converter_para_numero(din_edit)
                         v_bol = converter_para_numero(bol_edit)
 
+                        # Zera primeiro todas as colunas de pagamento para evitar resíduos cruzados
+                        set_cell("PIX", 0.0)
+                        set_cell("BOLETO", 0.0)
+                        set_cell("DINHEIRO", 0.0)
+                        if tem_cred: set_cell("CRÉD", 0.0)
+                        if tem_deb: set_cell("DÉB", 0.0)
+                        if not tem_cred and not tem_deb: set_cell("CART", 0.0)
+
                         if nova_forma == "Pagamento Misto":
                             val_final = v_pix + v_cred + v_deb + v_din + v_bol
                             set_cell("PIX", v_pix)
@@ -481,11 +487,16 @@ elif menu == "✏️ Alterar OS / Pagamento":
                             set_cell("OBS", "Pagamento Misto")
                         else:
                             val_final = converter_para_numero(novo_valor)
-                            set_cell("PIX", val_final if nova_forma == "Pix" else 0.0)
-                            set_cell("BOLETO", val_final if nova_forma == "Boleto" else 0.0)
-                            set_cell("DINHEIRO", val_final if nova_forma == "Dinheiro" else 0.0)
-                            
-                            if nova_forma == "Cartão de Crédito":
+                            if nova_forma == "Pix":
+                                set_cell("PIX", val_final)
+                                set_cell("OBS", "Pix")
+                            elif nova_forma == "Boleto":
+                                set_cell("BOLETO", val_final)
+                                set_cell("OBS", "Boleto")
+                            elif nova_forma == "Dinheiro":
+                                set_cell("DINHEIRO", val_final)
+                                set_cell("OBS", "Dinheiro")
+                            elif nova_forma == "Cartão de Crédito":
                                 if tem_cred: set_cell("CRÉD", val_final)
                                 else: set_cell("CART", val_final)
                                 set_cell("OBS", "Cartão de Crédito")
@@ -520,8 +531,15 @@ elif menu == "✏️ Alterar OS / Pagamento":
             if st.button("🗑️ Excluir esta OS", type="secondary", disabled=not confirmar_exclusao):
                 try:
                     ws = obter_worksheet_gspread()
-                    idx_relativo = df_os[df_os[col_os].astype(str) == os_para_editar].index[0]
-                    linha_planilha = idx_relativo + 5
+                    coluna_a_raw = ws.col_values(1)
+                    coluna_a_limpa = [str(x).replace('.0', '').strip() for x in coluna_a_raw]
+                    alvo_os = str(os_para_editar).replace('.0', '').strip()
+
+                    if alvo_os in coluna_a_limpa:
+                        linha_planilha = coluna_a_limpa.index(alvo_os) + 1
+                    else:
+                        idx_relativo = df_os[df_os[col_os].astype(str) == os_para_editar].index[0]
+                        linha_planilha = idx_relativo + 5
                     
                     ws.delete_rows(linha_planilha)
                     st.cache_data.clear()
