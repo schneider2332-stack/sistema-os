@@ -50,7 +50,6 @@ def carregar_dados():
         df = conn.read(worksheet=NOME_ABA, header=3, ttl=0)
         if df is not None and not df.empty:
             df = df.dropna(how='all')
-            # Garante que não carregue linhas totalmente em branco
             if "Número da OS" in df.columns:
                 df = df[df["Número da OS"].notna() & (df["Número da OS"].astype(str).str.strip() != "")]
             return df
@@ -100,7 +99,6 @@ if menu == "📈 Dashboard Financeiro":
     if not df_os.empty:
         df_calc = df_os.copy()
         
-        # Conversão numérica de valores
         col_total = next((c for c in df_calc.columns if "TOTAL" in str(c).upper() or "VALOR" in str(c).upper()), None)
         col_pago = next((c for c in df_calc.columns if "VALOR PAG" in str(c).upper() or "PAGO" in str(c).upper()), None)
         col_pend = next((c for c in df_calc.columns if "PEND" in str(c).upper() or "ABERTO" in str(c).upper()), None)
@@ -110,7 +108,6 @@ if menu == "📈 Dashboard Financeiro":
         df_calc['VALOR_PAGO_NUM'] = df_calc[col_pago].apply(converter_para_numero) if col_pago else 0.0
         df_calc['VALOR_PEND_NUM'] = df_calc[col_pend].apply(converter_para_numero) if col_pend else (df_calc['VALOR_TOTAL_NUM'] - df_calc['VALOR_PAGO_NUM'])
 
-        # Parsing de datas com detecção inteligente
         if col_data in df_calc.columns:
             df_calc['DATA_DT'] = pd.to_datetime(df_calc[col_data], errors='coerce', format='mixed')
             df_calc['MES_ANO'] = df_calc['DATA_DT'].dt.strftime('%m/%Y')
@@ -153,7 +150,6 @@ if menu == "📈 Dashboard Financeiro":
         label_periodo_pagto = "Geral" if mes_selecionado == "📅 Todos os Meses (Geral)" else mes_selecionado
         st.markdown(f"##### 💳 Faturamento Por Forma de Pagamento ({label_periodo_pagto})")
 
-        # Puxa os totais das colunas específicas ou de agrupamento
         col_pix = next((c for c in df_os.columns if "PIX" in str(c).upper()), None)
         col_cred = next((c for c in df_os.columns if "CRÉD" in str(c).upper() or "CRED" in str(c).upper()), None)
         col_deb = next((c for c in df_os.columns if "DÉB" in str(c).upper() or "DEB" in str(c).upper()), None)
@@ -229,7 +225,7 @@ elif menu == "🔍 Consultar OS":
         st.info("Nenhuma OS cadastrada para consulta.")
 
 # =============================================================================
-# 4. CADASTRAR NOVA OS (GRAVAÇÃO EXATA NA PRIMEIRA LINHA LIVRE)
+# 4. CADASTRAR NOVA OS (COM SUPORTE A PAGAMENTO MISTO)
 # =============================================================================
 elif menu == "➕ Cadastrar Nova OS":
     st.subheader("➕ Formulário para Cadastrar Nova OS")
@@ -246,11 +242,43 @@ elif menu == "➕ Cadastrar Nova OS":
         servico = st.text_area("Descrição do Serviço")
 
     with col2:
-        valor_input = st.text_input("Valor Total (R$)", value="0,00")
         forma_pagto = st.selectbox(
             "Forma de Pagamento", 
-            ["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro", "Boleto"]
+            ["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro", "Boleto", "Pagamento Misto"]
         )
+        
+        # Variáveis dos valores
+        val_pix_input = 0.0
+        val_cred_input = 0.0
+        val_deb_input = 0.0
+        val_din_input = 0.0
+        val_bol_input = 0.0
+        
+        if forma_pagto == "Pagamento Misto":
+            st.markdown("##### 💳 Valores Fracionados por Meio de Pagamento")
+            cp1, cp2 = st.columns(2)
+            pix_txt = cp1.text_input("Pix (R$)", value="0,00")
+            din_txt = cp2.text_input("Dinheiro (R$)", value="0,00")
+            
+            cp3, cp4 = st.columns(2)
+            cred_txt = cp3.text_input("Cartão de Crédito (R$)", value="0,00")
+            deb_txt = cp4.text_input("Cartão de Débito (R$)", value="0,00")
+            
+            bol_txt = st.text_input("Boleto (R$)", value="0,00")
+            
+            val_pix_input = converter_para_numero(pix_txt)
+            val_cred_input = converter_para_numero(cred_txt)
+            val_deb_input = converter_para_numero(deb_txt)
+            val_din_input = converter_para_numero(din_txt)
+            val_bol_input = converter_para_numero(bol_txt)
+            
+            total_misto = val_pix_input + val_cred_input + val_deb_input + val_din_input + val_bol_input
+            valor_total_efetivo = total_misto
+            st.info(f"**Total Consolidado do Pagamento Misto:** {formatar_moeda_br(total_misto)}")
+        else:
+            valor_input = st.text_input("Valor Total (R$)", value="0,00")
+            valor_total_efetivo = converter_para_numero(valor_input)
+
         status = st.selectbox("Situação Inicial", ["Paga", "Em Aberto", "Parcial"])
         data_entrada = st.date_input("Data de Entrada", datetime.now())
 
@@ -259,8 +287,6 @@ elif menu == "➕ Cadastrar Nova OS":
         if not cliente.strip():
             st.warning("⚠️ Por favor, informe o Nome do Cliente antes de salvar.")
         else:
-            val_formatado = converter_para_numero(valor_input)
-            
             # Montar a linha com base nas colunas oficiais
             nova_linha = {c: "" for c in COLUNAS_OFICIAIS}
             nova_linha["Número da OS"] = str(num_os).strip()
@@ -269,48 +295,48 @@ elif menu == "➕ Cadastrar Nova OS":
             nova_linha["Telefone"] = telefone
             nova_linha["Cidade"] = cidade
             nova_linha["Descrição"] = servico
-            nova_linha["Valor Total"] = val_formatado
+            nova_linha["Valor Total"] = valor_total_efetivo
             
             if status == "Paga":
-                nova_linha["Valor Pago"] = val_formatado
+                nova_linha["Valor Pago"] = valor_total_efetivo
                 nova_linha["Valor Pendente"] = 0.0
                 nova_linha["Data do Pagamento"] = data_entrada.strftime('%Y-%m-%d')
             else:
                 nova_linha["Valor Pago"] = 0.0
-                nova_linha["Valor Pendente"] = val_formatado
+                nova_linha["Valor Pendente"] = valor_total_efetivo
 
             nova_linha["Situação"] = str(status).strip()
 
-            # Atribuição por forma de pagamento
-            if forma_pagto == "Pix":
-                nova_linha["Pix"] = val_formatado
+            # Distribuição financeira
+            if forma_pagto == "Pagamento Misto":
+                nova_linha["Pix"] = val_pix_input
+                nova_linha["Cartão de Crédito"] = val_cred_input
+                nova_linha["Cartão de Débito"] = val_deb_input
+                nova_linha["Dinheiro"] = val_din_input
+                nova_linha["Boleto"] = val_bol_input
+                nova_linha["Observações"] = "Pagamento Misto (fechamento diário)"
+            elif forma_pagto == "Pix":
+                nova_linha["Pix"] = valor_total_efetivo
             elif forma_pagto == "Cartão de Crédito":
-                nova_linha["Cartão de Crédito"] = val_formatado
+                nova_linha["Cartão de Crédito"] = valor_total_efetivo
             elif forma_pagto == "Cartão de Débito":
-                nova_linha["Cartão de Débito"] = val_formatado
+                nova_linha["Cartão de Débito"] = valor_total_efetivo
             elif forma_pagto == "Boleto":
-                nova_linha["Boleto"] = val_formatado
+                nova_linha["Boleto"] = valor_total_efetivo
             elif forma_pagto == "Dinheiro":
-                nova_linha["Dinheiro"] = val_formatado
+                nova_linha["Dinheiro"] = valor_total_efetivo
 
             try:
                 ws = obter_worksheet_gspread()
-                
-                # Encontrar a primeira linha verdadeiramente vazia na coluna A
-                coluna_a = ws.col_values(1)  # Pega os valores da coluna A
-                
-                # Se só tem até a linha 4 (ou menos), a próxima linha é a 5
+                coluna_a = ws.col_values(1)
                 primeira_linha_livre = max(5, len(coluna_a) + 1)
                 
-                # Monta a lista de valores na ordem exata de A até P
                 lista_valores = [nova_linha.get(col, "") for col in COLUNAS_OFICIAIS]
-                
-                # Grava exatamente na linha livre encontrada (ex: A5:Q5)
                 alcance = f"A{primeira_linha_livre}:Q{primeira_linha_livre}"
                 ws.update(range_name=alcance, values=[lista_valores])
 
                 st.cache_data.clear()
-                st.success(f"✅ Ordem de Serviço {num_os} gravada com sucesso na linha {primeira_linha_livre}!")
+                st.success(f"✅ Ordem de Serviço {num_os} gravada com sucesso com pagamento via **{forma_pagto}**!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro ao salvar no Google Sheets: {e}")
@@ -337,43 +363,64 @@ elif menu == "✏️ Alterar OS / Pagamento":
                 with c1:
                     novo_status = st.selectbox("Novo Status", opcoes_status, index=idx_status)
                     nova_forma = st.selectbox(
-                        "Nova Forma de Pagamento", 
-                        ["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro", "Boleto"]
+                        "Forma de Pagamento", 
+                        ["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro", "Boleto", "Pagamento Misto"]
                     )
                 with c2:
                     val_atual = str(dados_os.get("Valor Total", "0,00"))
-                    novo_valor = st.text_input("Atualizar Valor Total (R$)", value=val_atual)
+                    novo_valor = st.text_input("Valor Total (R$)", value=val_atual)
+
+                # Se for misto na edição, permite ajustar os campos individuais
+                st.markdown("##### 💳 Ajuste por Meio de Pagamento (se Misto)")
+                e_col1, e_col2, e_col3 = st.columns(3)
+                pix_edit = e_col1.text_input("Pix (R$)", value=str(dados_os.get("Pix", "0,00")))
+                cred_edit = e_col2.text_input("Cartão de Crédito (R$)", value=str(dados_os.get("Cartão de Crédito", "0,00")))
+                deb_edit = e_col3.text_input("Cartão de Débito (R$)", value=str(dados_os.get("Cartão de Débito", "0,00")))
+                
+                e_col4, e_col5 = st.columns(2)
+                din_edit = e_col4.text_input("Dinheiro (R$)", value=str(dados_os.get("Dinheiro", "0,00")))
+                bol_edit = e_col5.text_input("Boleto (R$)", value=str(dados_os.get("Boleto", "0,00")))
 
                 btn_salvar_alt = st.form_submit_button("💾 Salvar Alterações na OS")
                 if btn_salvar_alt:
                     try:
                         ws = obter_worksheet_gspread()
                         idx_relativo = df_os[df_os[col_os].astype(str) == os_para_editar].index[0]
-                        linha_planilha = idx_relativo + 5  # Linha 4 cabeçalho, dados começam na 5
+                        linha_planilha = idx_relativo + 5
 
-                        val_num = converter_para_numero(novo_valor)
-
-                        # Encontra os índices das colunas
                         headers = ws.row_values(4)
-                        
                         def atualizar_se_existir(nome_col, valor):
                             if nome_col in headers:
                                 col_idx = headers.index(nome_col) + 1
                                 ws.update_cell(linha_planilha, col_idx, valor)
 
+                        v_pix = converter_para_numero(pix_edit)
+                        v_cred = converter_para_numero(cred_edit)
+                        v_deb = converter_para_numero(deb_edit)
+                        v_din = converter_para_numero(din_edit)
+                        v_bol = converter_para_numero(bol_edit)
+
+                        if nova_forma == "Pagamento Misto":
+                            val_final = v_pix + v_cred + v_deb + v_din + v_bol
+                            atualizar_se_existir("Pix", v_pix)
+                            atualizar_se_existir("Cartão de Crédito", v_cred)
+                            atualizar_se_existir("Cartão de Débito", v_deb)
+                            atualizar_se_existir("Dinheiro", v_din)
+                            atualizar_se_existir("Boleto", v_bol)
+                        else:
+                            val_final = converter_para_numero(novo_valor)
+                            for f in ["Pix", "Cartão de Crédito", "Cartão de Débito", "Boleto", "Dinheiro"]:
+                                atualizar_se_existir(f, val_final if f == nova_forma else 0.0)
+
                         atualizar_se_existir("Situação", str(novo_status).strip())
-                        atualizar_se_existir("Valor Total", val_num)
+                        atualizar_se_existir("Valor Total", val_final)
 
                         if novo_status == "Paga":
-                            atualizar_se_existir("Valor Pago", val_num)
+                            atualizar_se_existir("Valor Pago", val_final)
                             atualizar_se_existir("Valor Pendente", 0.0)
                         else:
                             atualizar_se_existir("Valor Pago", 0.0)
-                            atualizar_se_existir("Valor Pendente", val_num)
-
-                        # Limpa formas de pagamento antigas e grava na nova
-                        for f in ["Pix", "Cartão de Crédito", "Cartão de Débito", "Boleto", "Dinheiro"]:
-                            atualizar_se_existir(f, val_num if f == nova_forma else 0.0)
+                            atualizar_se_existir("Valor Pendente", val_final)
 
                         st.cache_data.clear()
                         st.success(f"✅ OS {os_para_editar} atualizada com sucesso!")
