@@ -2,19 +2,45 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 from streamlit_gsheets import GSheetsConnection
+import gspread
+from google.oauth2.service_account import Credentials
 
 # =============================================================================
-# 1. CONFIGURAÇÃO INICIAL E CONEXÃO
+# 1. CONFIGURAÇÃO INICIAL E CONEXÕES
 # =============================================================================
 st.set_page_config(page_title="Sistema de OS & Gestão Financeira", layout="wide")
 
 NOME_ABA = "Ordens de Serviço"
 
+# Função para conectar diretamente via gspread nativo para gravações e edições seguras
+def obter_worksheet_gspread():
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    secrets_gsheets = st.secrets["connections"]["gsheets"]
+    cred_dict = {
+        "type": secrets_gsheets.get("type", "service_account"),
+        "project_id": secrets_gsheets.get("project_id"),
+        "private_key_id": secrets_gsheets.get("private_key_id"),
+        "private_key": secrets_gsheets.get("private_key").replace("\\n", "\n"),
+        "client_email": secrets_gsheets.get("client_email"),
+        "client_id": secrets_gsheets.get("client_id"),
+        "auth_uri": secrets_gsheets.get("auth_uri", "https://accounts.google.com/o/oauth2/auth"),
+        "token_uri": secrets_gsheets.get("token_uri", "https://oauth2.googleapis.com/token"),
+        "auth_provider_x509_cert_url": secrets_gsheets.get("auth_provider_x509_cert_url"),
+        "client_x509_cert_url": secrets_gsheets.get("client_x509_cert_url")
+    }
+    creds = Credentials.from_service_account_info(cred_dict, scopes=scopes)
+    gc = gspread.authorize(creds)
+    sh = gc.open_by_url(secrets_gsheets["spreadsheet"])
+    return sh.worksheet(NOME_ABA)
+
 @st.cache_data(ttl=0)
 def carregar_dados():
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
-        # Lê a partir da linha 4 (onde ficam os cabeçalhos na folha)
+        # Lê a partir da linha 4 onde ficam os cabeçalhos na planilha
         df = conn.read(worksheet=NOME_ABA, header=3, ttl=0)
         if df is not None and not df.empty:
             df = df.dropna(how='all')
@@ -46,8 +72,6 @@ def identificar_colunas(df):
     cols = list(df.columns)
     
     c_os = next((c for c in cols if "NÚMERO" in str(c).upper() or "OS" in str(c).upper()), cols[0] if cols else None)
-    
-    # Data de Emissão (evitando capturar Data do Pagamento)
     c_data = next((c for c in cols if str(c).strip().upper() == "DATA"), None)
     if not c_data:
         c_data = next((c for c in cols if "DATA" in str(c).upper() and "PAG" not in str(c).upper()), None)
@@ -55,7 +79,6 @@ def identificar_colunas(df):
     c_cli = next((c for c in cols if "CLIENTE" in str(c).upper() or "NOME" in str(c).upper()), None)
     c_desc = next((c for c in cols if "DESC" in str(c).upper() or "SERVI" in str(c).upper()), None)
     
-    # Valores
     c_val_tot = next((c for c in cols if "VALOR TOT" in str(c).upper() or str(c).strip().upper() == "VALOR"), None)
     c_val_pago = next((c for c in cols if "VALOR PAG" in str(c).upper() or "PAGO" in str(c).upper()), None)
     c_val_pend = next((c for c in cols if "PEND" in str(c).upper() or "ABERTO" in str(c).upper()), None)
@@ -101,7 +124,6 @@ if menu == "📈 Dashboard Financeiro":
             df_calc['VALOR_PAGO_NUM'] = df_calc['VALOR_TOTAL_NUM'].where(mask_pago, 0.0)
             df_calc['VALOR_PEND_NUM'] = df_calc['VALOR_TOTAL_NUM'].where(~mask_pago, 0.0)
 
-        # Parsing de data sem trocar dia por mês
         if col_data:
             df_calc['DATA_DT'] = pd.to_datetime(df_calc[col_data], errors='coerce', format='mixed')
             df_calc['MES_ANO'] = df_calc['DATA_DT'].dt.strftime('%m/%Y')
@@ -144,7 +166,6 @@ if menu == "📈 Dashboard Financeiro":
         label_periodo_pagto = "Geral" if mes_selecionado == "📅 Todos os Meses (Geral)" else mes_selecionado
         st.markdown(f"##### 💳 Faturamento Por Forma de Pagamento ({label_periodo_pagto})")
 
-        # Localização de colunas específicas de pagamento
         col_pix = next((c for c in df_os.columns if "PIX" in str(c).upper()), None)
         col_cred = next((c for c in df_os.columns if "CRÉD" in str(c).upper() or "CRED" in str(c).upper()), None)
         col_deb = next((c for c in df_os.columns if "DÉB" in str(c).upper() or "DEB" in str(c).upper()), None)
@@ -169,7 +190,6 @@ if menu == "📈 Dashboard Financeiro":
         elif col_pagto:
             debito = df_filtrado[df_filtrado[col_pagto].astype(str).str.upper().str.contains("DÉBITO|DEBITO", na=False)]['VALOR_TOTAL_NUM'].sum()
 
-        # Se houver coluna de Cartão geral mas sem separação no cabeçalho
         if col_cartao_geral and not col_cred and not col_deb:
             if col_pagto:
                 credito = df_filtrado[df_filtrado[col_pagto].astype(str).str.upper().str.contains("CRÉDITO|CREDITO", na=False)]['VALOR_TOTAL_NUM'].sum()
@@ -250,13 +270,12 @@ elif menu == "🔍 Consultar OS":
         st.info("Nenhuma OS cadastrada para consulta.")
 
 # =============================================================================
-# 4. CADASTRAR NOVA OS
+# 4. CADASTRAR NOVA OS (COM GSPREAD DIRETO)
 # =============================================================================
 elif menu == "➕ Cadastrar Nova OS":
     st.subheader("➕ Formulário para Cadastrar Nova OS")
     st.caption("Preencha os dados abaixo e clique em 'Salvar Ordem de Serviço'.")
 
-    # Próximo número sequencial
     proximo_num = (len(df_os) + 1001) if not df_os.empty else 1001
 
     col1, col2 = st.columns(2)
@@ -285,7 +304,7 @@ elif menu == "➕ Cadastrar Nova OS":
 
             nova_linha = {col: "" for col in df_os.columns}
             if col_os: nova_linha[col_os] = str(num_os).strip()
-            if col_data: nova_linha[c_data] = data_entrada.strftime('%Y-%m-%d')
+            if col_data: nova_linha[col_data] = data_entrada.strftime('%Y-%m-%d')
             if col_cli: nova_linha[col_cli] = cliente
             if col_desc: nova_linha[col_desc] = servico
             if col_total: nova_linha[col_total] = val_formatado
@@ -301,7 +320,6 @@ elif menu == "➕ Cadastrar Nova OS":
             if col_pag: nova_linha[col_pag] = forma_pagto
             if col_tel: nova_linha[col_tel] = telefone
 
-            # Distribuição nas colunas auxiliares se existirem
             col_pix = next((c for c in df_os.columns if "PIX" in str(c).upper()), None)
             col_cred = next((c for c in df_os.columns if "CRÉD" in str(c).upper() or "CRED" in str(c).upper()), None)
             col_deb = next((c for c in df_os.columns if "DÉB" in str(c).upper() or "DEB" in str(c).upper()), None)
@@ -327,16 +345,8 @@ elif menu == "➕ Cadastrar Nova OS":
                 nova_linha[col_dinheiro] = val_formatado
 
             try:
-                conn = st.connection("gsheets", type=GSheetsConnection)
-                client = getattr(conn, "_instance", None) or getattr(conn, "client", None)
-                if client is None and hasattr(conn, "_connect"):
-                    client = conn._connect()
-
-                spreadsheet_url = st.secrets.connections.gsheets.spreadsheet
-                sh = client.open_by_url(spreadsheet_url)
-                ws = sh.worksheet(NOME_ABA)
-
-                valores_linha = [nova_linha.get(col, "") for col in df_os.columns]
+                ws = obter_worksheet_gspread()
+                valores_linha = [str(nova_linha.get(col, "")) for col in df_os.columns]
                 ws.append_row(valores_linha)
 
                 st.cache_data.clear()
@@ -377,15 +387,7 @@ elif menu == "✏️ Alterar OS / Pagamento":
                 btn_salvar_alt = st.form_submit_button("💾 Salvar Alterações na OS")
                 if btn_salvar_alt:
                     try:
-                        conn = st.connection("gsheets", type=GSheetsConnection)
-                        client = getattr(conn, "_instance", None) or getattr(conn, "client", None)
-                        if client is None and hasattr(conn, "_connect"):
-                            client = conn._connect()
-
-                        spreadsheet_url = st.secrets.connections.gsheets.spreadsheet
-                        sh = client.open_by_url(spreadsheet_url)
-                        ws = sh.worksheet(NOME_ABA)
-
+                        ws = obter_worksheet_gspread()
                         idx_relativo = df_os[df_os[col_os].astype(str) == os_para_editar].index[0]
                         linha_planilha = idx_relativo + 5
 
